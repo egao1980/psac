@@ -11,7 +11,8 @@ canonical JSON that must match the CL runtime's output byte-for-byte.
 open PsacModel
 open Lean (Json)
 
-structure Scenario where
+/-- Differential-harness input file (distinct from `PsacModel.Scenario`, the as-if batch). -/
+structure DiffScenario where
   mods : List (String × Int)
   nodes : List Node
   updates : List (List (String × Int))
@@ -24,7 +25,7 @@ def parseOp : String → Except String Op
   | "min" => .ok .min
   | o => .error s!"unknown op: {o}"
 
-def parseScenario (j : Json) : Except String Scenario := do
+def parseScenario (j : Json) : Except String DiffScenario := do
   let modsArr ← (← j.getObjVal? "mods").getArr?
   let mods ← modsArr.toList.mapM fun m => do
     let name ← (← m.getObjVal? "name").getStr?
@@ -48,10 +49,10 @@ def parseScenario (j : Json) : Except String Scenario := do
       pure (m, v)
   pure { mods, nodes, updates }
 
-def applyWrites (σ : Store) (writes : List (String × Int)) : Store :=
+def applyBatch (σ : Store) (writes : List (String × Int)) : Store :=
   writes.foldl (fun σ nv => σ.set nv.1 nv.2) σ
 
-def sortedNames (sc : Scenario) : List String :=
+def sortedNames (sc : DiffScenario) : List String :=
   ((sc.mods.map (·.1) ++ sc.nodes.map (·.out)).toArray.qsort (· < ·)).toList
 
 def renderVals (vals : List (String × Int)) : String :=
@@ -74,11 +75,11 @@ def main (args : List String) : IO UInt32 := do
   | .ok sc =>
     let ns := sortedNames sc
     let prog := sc.nodes
-    let mut σin : Store := applyWrites (fun _ => 0) sc.mods
+    let mut σin : Store := applyBatch (fun _ => 0) sc.mods
     let mut σfull := eval σin prog
     let mut steps := [ns.map fun n => (n, σfull n)]
     for batch in sc.updates do
-      let σin' := applyWrites σin batch
+      let σin' := applyBatch σin batch
       let full := eval σin' prog
       let inc := propagate σfull σin' prog
       for n in ns do

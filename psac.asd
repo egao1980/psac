@@ -13,6 +13,7 @@
                (:file "propagate")
                (:file "parallel")
                (:file "provenance")
+               (:file "scenario")
                (:file "policy")
                (:file "examples")
                (:file "portfolio")

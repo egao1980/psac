@@ -60,6 +60,15 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 - **Provenance**: `support` (backward slice, control + data dependence), `explain-update` (last propagation's
   causal chain), `probe` (counterfactuals via propagate-and-rollback). Selective-provenance combinators
   (`:provenance` on `adaptive-read`) sharpen `max`-like ops to their argmax.
+- **Scenarios** (tagged / private / as-if updates): `with-scenario` + `scenario-write!` +
+  `scenario-propagate!` run a named batch of hypothetical writes against the live graph and roll it
+  back on exit (normal or non-local); `what-if` is the multi-write `probe`. Private: the base
+  universe, `*last-bill*` and `*last-update-log*` are untouched — hypothetical recompute cost lands
+  on the scenario's own bill, blamed on the scenario owner, retrievable by tag (`find-scenario`,
+  `scenario-bill-alist`, `scenario-explain`). Scenarios nest LIFO. Lean counterparts in
+  `model/PsacModel/Scenario.lean`: `scenario_observe` (as-if = from-scratch on the tagged world),
+  `scenario_roundtrip` (rollback restores the base world exactly), `scenario_private` (a scenario
+  writing outside an observer's support is invisible to that observer).
 - **Access**: read/write capabilities, fixnum-bitset label lattice (`*enforce-labels*`), policy-as-SAC:
   per-fact mods `member?(p,g)` / `grants(g,c)` at stratum 0 propagate before data, so revocation is just
   change propagation. `release-gated` demonstrates a differencing-resistant aggregate gate.

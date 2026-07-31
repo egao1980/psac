@@ -253,6 +253,65 @@
         ;; billing: the single node re-ran once per update
         (ok (= (bill-total (last-bill)) 1))))))
 
+(deftest scenario-updates
+  (testing "tagged / private / as-if updates roll back and bill their owner"
+    (reset-graph!)
+    (let ((x (make-mod 1 :name "sx"))
+          (y (make-mod nil :name "sy")))
+      (adaptive-read ((v x)) (write! y (* v 10)))
+      ;; nested scenarios: inner rolls back to the outer world, outer to base
+      (with-scenario ("outer" :owner "alice")
+        (scenario-write! x 2)
+        (scenario-propagate!)
+        (ok (= (mod-value y) 20))
+        (with-scenario ("inner" :owner "bob")
+          (scenario-write! x 5)
+          (scenario-propagate!)
+          (ok (= (mod-value y) 50)))
+        (ok (= (mod-value y) 20)))
+      (ok (= (mod-value x) 1))
+      (ok (= (mod-value y) 10))
+      ;; tagged registry with per-owner attribution of hypothetical work
+      (ok (equal (scenario-bill-alist "outer") (list (cons (intern-principal "alice") 1))))
+      (ok (equal (scenario-bill-alist "inner") (list (cons (intern-principal "bob") 1))))
+      (ok (not (scenario-live-p (find-scenario "outer"))))
+      ;; non-local exit still rolls back
+      (ok (signals (with-scenario ("boom")
+                     (scenario-write! x 99)
+                     (scenario-propagate!)
+                     (error "boom"))
+                   'error))
+      (ok (= (mod-value x) 1))
+      (ok (= (mod-value y) 10)))))
+
+(deftest scenario-portfolio-stress
+  (testing "WHAT-IF stress on the portfolio leaves base world, bill, and log untouched"
+    (reset-graph!)
+    (reset-policy!)
+    (let ((u (make-universe '(("AAPL" 19000 100 18000 2)
+                              ("MSFT" 41000 50 40000 2)
+                              ("GOOG" 17500 -30 18000 2))
+                            '("AAPL"))))
+      (tick! u "GOOG" 17600)
+      (ok (= (mod-value (universe-firm-pnl u)) 162000))
+      (let ((bill-before (bill-alist))
+            (log-before (explain-update)))
+        (multiple-value-bind (vals sc)
+            (what-if (list (cons (asset-price-mod (find-asset u "AAPL")) 18000)
+                           (cons (asset-price-mod (find-asset u "MSFT")) 39000))
+                     (list (universe-firm-pnl u))
+                     :tag "crash-test" :owner "alice")
+          ;; AAPL pnl 0, MSFT pnl -50000, GOOG pnl 12000
+          (ok (equal vals '(-38000)))
+          ;; hypothetical recompute billed to alice on the scenario, not the base bill
+          (ok (equal (scenario-bill-alist sc)
+                     (list (cons (intern-principal "alice") 17))))
+          (ok (consp (scenario-explain "crash-test"))))
+        ;; base universe exactly as before
+        (ok (= (mod-value (universe-firm-pnl u)) 162000))
+        (ok (equal (bill-alist) bill-before))
+        (ok (equal (explain-update) log-before))))))
+
 (deftest portfolio-scenario
   (testing "portfolio risk: access control, request billing, provenance report"
     (reset-graph!)

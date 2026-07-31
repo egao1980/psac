@@ -38,15 +38,16 @@ With SELECTIVE, ops that declared :provenance are sliced to their determining in
                                                     (node-deps w selective)))))))))
     (walk mod depth)))
 
+(defun explain-record (r)
+  (list :node (node-name (update-record-node r))
+        :blame (blame-principals (update-record-blame r))
+        :cost (update-record-cost r)
+        :wrote (mapcar #'modref-name (update-record-writes r))))
+
 (defun explain-update ()
   "Causal chain of the last propagation, in execution order: which nodes re-ran, on whose
 blame, at what cost, writing which mods."
-  (mapcar (lambda (r)
-            (list :node (node-name (update-record-node r))
-                  :blame (blame-principals (update-record-blame r))
-                  :cost (update-record-cost r)
-                  :wrote (mapcar #'modref-name (update-record-writes r))))
-          *last-update-log*))
+  (mapcar #'explain-record *last-update-log*))
 
 (defun probe (mod value output)
   "Counterfactual: the value OUTPUT would take if MOD were VALUE.

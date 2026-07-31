@@ -20,6 +20,10 @@
    #:last-bill #:bill-total #:bill-alist #:last-update-log
    ;; provenance
    #:support #:explain #:explain-update #:probe
+   ;; scenarios (tagged / private / as-if updates)
+   #:with-scenario #:scenario-write! #:scenario-propagate! #:what-if
+   #:find-scenario #:scenario-explain #:scenario-bill-alist
+   #:scenario-tag #:scenario-owner #:scenario-live-p
    ;; policy
    #:member-mod #:grant-mod #:allowed-mod #:admit! #:revoke! #:grant-class! #:guarded-read #:release-gated
    #:reset-policy!
