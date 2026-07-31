@@ -13,8 +13,13 @@
     ((or string symbol)
      (let ((key (string-downcase (string name))))
        (or (gethash key *principal-ids*)
-           (let ((id (incf *principal-counter*)))
-             (setf (gethash key *principal-ids*) id
+           (let ((id (1+ *principal-counter*)))
+             ;; blame/label slots are fixnums; overflowing them would silently corrupt masks
+             (unless (typep (ash 1 id) 'fixnum)
+               (error "too many principals: blame masks are fixnums (~a usable bits)"
+                      (1- (integer-length most-positive-fixnum))))
+             (setf *principal-counter* id
+                   (gethash key *principal-ids*) id
                    (gethash id *principal-names*) key)
              id))))))
 
@@ -89,3 +94,12 @@
                      (label-flow-error-node-label c)
                      (modref-name (label-flow-error-mod c))
                      (modref-label (label-flow-error-mod c))))))
+
+(define-condition height-invariant-error (error)
+  ((writer :initarg :writer :reader height-invariant-error-writer)
+   (reader :initarg :reader :reader height-invariant-error-reader))
+  (:report (lambda (c stream)
+             (format stream "height invariant violated: writer ~a dirties same-stratum reader ~a ~
+whose height is not greater; propagation would glitch (and mis-bill under parallel waves)"
+                     (height-invariant-error-writer c)
+                     (height-invariant-error-reader c)))))

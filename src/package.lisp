@@ -9,7 +9,7 @@
    ;; caps
    #:grant-read #:grant-write #:read-cap #:read-cap-p #:write-cap #:write-cap-p
    ;; conditions
-   #:label-flow-error #:*enforce-labels*
+   #:label-flow-error #:*enforce-labels* #:height-invariant-error
    ;; core
    #:adaptive-read #:register-read #:write! #:propagate! #:reset-graph!
    ;; parallel
@@ -26,7 +26,7 @@
    #:scenario-tag #:scenario-owner #:scenario-live-p
    ;; policy
    #:member-mod #:grant-mod #:allowed-mod #:admit! #:revoke! #:grant-class! #:guarded-read #:release-gated
-   #:reset-policy!
+   #:reset-policy! #:reset-all!
    ;; examples
    #:adaptive-map #:adaptive-filter #:adaptive-reduce #:adaptive-max #:adaptive-avg
    ;; portfolio scenario

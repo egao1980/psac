@@ -34,7 +34,9 @@
     (adaptive-reduce #'append wrapped :name name)))
 
 (defun adaptive-max (mods &key (name "max"))
-  "Maximum over MODS, with selective provenance: only the argmax determines the result."
+  "Maximum over MODS, with selective provenance: the argmax positions (all of them, under
+ties) explain the result. Selective slices explain the current value; only the full
+\(non-selective) support bounds influence."
   (let ((out (make-mod nil :name (format nil "~a-out" name))))
     (register-read mods
                    (lambda (&rest vals)
@@ -43,7 +45,9 @@
                        m))
                    :name "max-node"
                    :provenance (lambda (result vals mods-read)
-                                 (list (nth (position result vals) mods-read))))
+                                 (loop for v in vals
+                                       for m in mods-read
+                                       when (= v result) collect m)))
     out))
 
 (defun adaptive-avg (mods &key (name "avg"))

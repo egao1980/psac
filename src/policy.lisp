@@ -68,7 +68,10 @@ Revocation re-runs BODY through ordinary change propagation."
 (defun release-gated (source out &key (min-distinct-owners 2))
   "Differencing-resistant release gate: copy SOURCE to OUT only once writes from at least
 MIN-DISTINCT-OWNERS distinct principals have accumulated since the last release. A single
-principal's update can never be recovered by differencing consecutive releases."
+principal's update can never be recovered by differencing consecutive releases.
+Caveat: the accumulated-owner state lives in this closure, so if the gate node is nested
+under another R-node and gets killed/rebuilt by a parent re-run, the pending mask resets
+\(and the rebuild releases the current value). Register gates at top level."
   (let ((pending 0)
         (first-run t))
     (register-read (list source)
@@ -89,4 +92,18 @@ principal's update can never be recovered by differencing consecutive releases."
   (clrhash *member-mods*)
   (clrhash *grant-mods*)
   (clrhash *allowed-mods*)
+  (values))
+
+(defun reset-all! ()
+  "Full reset for tests and demos: graph, policy, scenarios, principals, counters.
+Makes principal ids (and therefore blame-split remainders) deterministic per session."
+  (reset-graph!)
+  (reset-policy!)
+  (clrhash *scenarios*)
+  (clrhash *principal-ids*)
+  (clrhash *principal-names*)
+  (setf *principal-counter* -1
+        *current-principal* (intern-principal "system")
+        *mod-counter* 0
+        *rnode-counter* 0)
   (values))

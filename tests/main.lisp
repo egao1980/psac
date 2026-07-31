@@ -4,7 +4,7 @@
 
 (deftest core-propagation
   (testing "chain propagation and cutoff"
-    (reset-graph!)
+    (reset-all!)
     (let ((x (make-mod 1 :name "x"))
           (y (make-mod nil :name "y"))
           (z (make-mod nil :name "z")))
@@ -21,7 +21,7 @@
 
 (deftest reduce-tree
   (testing "balanced reduction updates in O(log n)"
-    (reset-graph!)
+    (reset-all!)
     (let* ((inputs (loop for i below 8 collect (make-mod (1+ i) :name (format nil "x~a" i))))
            (total (adaptive-reduce #'+ inputs)))
       (ok (= (mod-value total) 36))
@@ -35,7 +35,7 @@
 
 (deftest randomized-consistency
   (testing "incremental result equals from-scratch after random updates"
-    (reset-graph!)
+    (reset-all!)
     (let* ((n 16)
            (inputs (loop for i below n collect (make-mod i)))
            (total (adaptive-reduce #'+ inputs))
@@ -51,7 +51,7 @@
 
 (deftest cost-attribution
   (testing "bills are conserved and split deterministically"
-    (reset-graph!)
+    (reset-all!)
     (let* ((inputs (loop for i below 4 collect (make-mod (1+ i))))
            (total (adaptive-reduce #'+ inputs))
            (alice (intern-principal "alice"))
@@ -76,7 +76,7 @@
 
 (deftest provenance
   (testing "support, selective provenance, counterfactual probes"
-    (reset-graph!)
+    (reset-all!)
     (let* ((inputs (loop for i below 4 collect (make-mod (* 10 (1+ i)) :name (format nil "p~a" i))))
            (total (adaptive-reduce #'+ inputs))
            (mx (adaptive-max inputs)))
@@ -90,12 +90,16 @@
         (ok (= (probe (first inputs) 1000 total) (+ 1000 20 30 40)))
         ;; probe restored the world: value, bill
         (ok (= (mod-value total) (+ 11 20 30 40)))
-        (ok (= (bill-total) bill-before))))))
+        (ok (= (bill-total) bill-before)))
+      ;; under ties, every argmax witness is in the selective slice
+      (write! (third inputs) 40)
+      (propagate!)
+      (ok (equal (sort (mapcar #'modref-name (support mx)) #'string<)
+                 (list "p2" "p3"))))))
 
 (deftest policy-revocation
   (testing "revocation and re-admission are change propagation"
-    (reset-graph!)
-    (reset-policy!)
+    (reset-all!)
     (let ((salary (make-mod 50000 :name "salary"))
           (out (make-mod nil :name "alice-view")))
       (admit! "alice" :eng)
@@ -114,7 +118,7 @@
 
 (deftest label-enforcement
   (testing "pc-label must flow to the written mod"
-    (reset-graph!)
+    (reset-all!)
     (let ((*enforce-labels* t))
       (let ((secret (make-mod 42 :label 1))
             (public (make-mod nil :label 0))
@@ -125,7 +129,7 @@
 
 (deftest release-gate-differencing
   (testing "aggregate release gate blocks single-owner differencing"
-    (reset-graph!)
+    (reset-all!)
     (let* ((salaries (loop for name in '("s-alice" "s-bob" "s-carol" "s-dave")
                            for v in '(40 60 80 100)
                            collect (make-mod v :name name)))
@@ -147,7 +151,7 @@
 
 (deftest parallel-propagation
   (testing "parallel waves match from-scratch; bills conserved"
-    (reset-graph!)
+    (reset-all!)
     (let* ((n 64)
            (inputs (loop for i below n collect (make-mod i)))
            (squares (adaptive-map (lambda (v) (* v v)) inputs :name "sq"))
@@ -166,7 +170,7 @@
 
 (deftest parallel-nested
   (testing "nested reads rebuild correctly under parallel propagation"
-    (reset-graph!)
+    (reset-all!)
     (let ((x (make-mod 2))
           (y (make-mod 3))
           (out (make-mod nil)))
@@ -183,8 +187,7 @@
 
 (deftest parallel-stratified
   (testing "policy stratum quiesces before data even in parallel waves"
-    (reset-graph!)
-    (reset-policy!)
+    (reset-all!)
     (let ((salary (make-mod 100 :name "salary2"))
           (out (make-mod nil)))
       (admit! "carol" :hr)
@@ -199,7 +202,7 @@
 
 (deftest par-fork-join
   (testing "PAR branches with nested reads: incremental matches from-scratch, :par context recorded"
-    (reset-graph!)
+    (reset-all!)
     (ensure-kernel)
     (let* ((trigger (make-mod 0 :name "trigger"))
            (l (make-mod 2 :name "l"))
@@ -232,7 +235,7 @@
 
 (deftest par-map-consistency
   (testing "PAR-MAP inside one node matches its sequential result across updates"
-    (reset-graph!)
+    (reset-all!)
     (ensure-kernel)
     (let ((in (make-mod 1 :name "pm-in"))
           (out (make-mod nil :name "pm-out"))
@@ -255,7 +258,7 @@
 
 (deftest scenario-updates
   (testing "tagged / private / as-if updates roll back and bill their owner"
-    (reset-graph!)
+    (reset-all!)
     (let ((x (make-mod 1 :name "sx"))
           (y (make-mod nil :name "sy")))
       (adaptive-read ((v x)) (write! y (* v 10)))
@@ -286,8 +289,7 @@
 
 (deftest scenario-portfolio-stress
   (testing "WHAT-IF stress on the portfolio leaves base world, bill, and log untouched"
-    (reset-graph!)
-    (reset-policy!)
+    (reset-all!)
     (let ((u (make-universe '(("AAPL" 19000 100 18000 2)
                               ("MSFT" 41000 50 40000 2)
                               ("GOOG" 17500 -30 18000 2))
@@ -314,8 +316,7 @@
 
 (deftest portfolio-scenario
   (testing "portfolio risk: access control, request billing, provenance report"
-    (reset-graph!)
-    (reset-policy!)
+    (reset-all!)
     (let ((u (make-universe '(("AAPL" 19000 100 18000 2)
                               ("MSFT" 41000 50 40000 2)
                               ("GOOG" 17500 -30 18000 2))

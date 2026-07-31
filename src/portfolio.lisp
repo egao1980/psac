@@ -94,8 +94,11 @@ policy. Assumes a fresh graph (caller does RESET-GRAPH! / RESET-POLICY!)."
                          (write! worst m)
                          m))
                      :name "worst-position-node" :cost 3
+                     ;; all argmin witnesses: under ties, every tied position explains the value
                      :provenance (lambda (result vals mods-read)
-                                   (list (nth (position result vals) mods-read))))
+                                   (loop for v in vals
+                                         for m in mods-read
+                                         when (= v result) collect m)))
       (setf (universe-firm-pnl u) firm
             (universe-desk-pnl u) desk
             (universe-exposure u) expo
@@ -234,8 +237,7 @@ update, and a counterfactual probe (SHOCK-TICKER moved by SHOCK-BPS basis points
   "End-to-end scenario: build the book, tick the market, trade, serve billed requests
 for Alice (full access) and Bob (desk aggregates only), print Alice's report and the
 request ledger."
-  (reset-graph!)
-  (reset-policy!)
+  (reset-all!)
   (let ((u (make-universe
             ;; ticker  price  qty  basis  source-cost (per-update API cost of that feed)
             '(("AAPL" 19000 100 18000 2)

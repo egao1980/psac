@@ -34,8 +34,11 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 
 ## Design notes
 
-- **Propagation**: dirty R-nodes processed in (stratum, height) order; equality cutoff on `write!`.
-  Height-based glitch-free ordering (Jane Street Incremental style); RSP timestamps remain future work.
+- **Propagation**: dirty R-nodes processed in (stratum, height) order (bucketed by level; O(1)-ish
+  scheduling); equality cutoff on `write!`. Height-based glitch-free ordering (Jane Street Incremental
+  style); RSP timestamps remain future work. Heights are fixed at node creation; a same-stratum height
+  inversion (stale heights on a pathological dynamic graph) now signals a continuable
+  `height-invariant-error` instead of silently glitching.
 - **Parallel propagation** (`propagate-parallel!`): level-synchronous waves on an lparallel kernel.
   By the height invariant, same-level dirty nodes never read each other's outputs, so each
   (stratum, height) level runs as one parallel wave with a barrier between levels. Graph bookkeeping
@@ -62,7 +65,10 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   proved in `model/PsacModel/Cost.lean`.
 - **Provenance**: `support` (backward slice, control + data dependence), `explain-update` (last propagation's
   causal chain), `probe` (counterfactuals via propagate-and-rollback). Selective-provenance combinators
-  (`:provenance` on `adaptive-read`) sharpen `max`-like ops to their argmax.
+  (`:provenance` on `adaptive-read`) sharpen `max`-like ops to their argmax witnesses (all of them, under
+  ties). Note the scope of the guarantee: `support_sound` (Lean) covers the full, non-selective support —
+  inputs outside it cannot change the value. Selective slices explain the current value only; they do not
+  bound influence (for a max, any input rising above the current value would change it).
 - **Scenarios** (tagged / private / as-if updates): `with-scenario` + `scenario-write!` +
   `scenario-propagate!` run a named batch of hypothetical writes against the live graph and roll it
   back on exit (normal or non-local); `what-if` is the multi-write `probe`. Private: the base
