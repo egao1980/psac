@@ -69,7 +69,7 @@ grants(desk-b,desk-b) ┼─▶ allowed-node(bob,desk-b) ──▶ allowed?(bob,
 
 Underneath, the same runtime provides level-synchronous parallel propagation
 (`propagate-parallel!`) and fork-join inside computations (`par`, `par-map`) — see
-section 10, proof-backed per section 11.
+section 11, proof-backed per section 12.
 
 ## 4. Building the book (code)
 
@@ -141,8 +141,9 @@ Alice's trade shows the **equality cutoff**: her GOOG amendment (qty −30 → �
 18000 → 17800) happens to leave GOOG P&L at exactly 15000, so `pnl[GOOG]` doesn't
 change value and the aggregates never re-run — only `pnl-node[GOOG]` (1) and
 `exposure-node` (4), hence the bill of 5. Costs are split among co-blamed principals by
-integer division with the remainder to the lowest id — exactly conserved
-(`charge_conserves` / `bill_conserves` in Lean).
+integer division with the remainder to the lowest id — exactly conserved, and
+remainder-to-lowest is itself proved (`charge_conserves` / `bill_conserves` /
+`blame_head_lowest` in Lean).
 
 ## 6. Access control: what Bob can and cannot see
 
@@ -250,7 +251,35 @@ P&L 162000) this answers **−38000**, bills 17 cost units to alice *on the scen
 and the update log are byte-identical to before. Scenarios nest LIFO and roll back on
 non-local exit too.
 
-## 10. Parallel execution: the same graph, more workers
+## 10. Dynamic membership: a growing book
+
+`make-universe` fixes every read set at build time — psac's **static-topology
+assumption**: node read sets never change, heights are computed once, and a topology
+change is either *additive* (new nodes over live mods) or done by building a fresh
+universe (universes coexist in one graph). The dynamic book (`make-dynamic-book` /
+`add-asset!` in `src/portfolio.lisp`) shows the additive pattern: firm P&L lives in an
+`adaptive-forest` — a binary-counter forest of perfect reduction trees — so admitting
+an asset is **path copying, not mutation**: O(log n) new merge nodes (amortized O(1))
+over live mods, no existing node re-registered or re-executed, sibling subtrees
+physically reused (trace, provenance and all), and consumers hold one stable total mod
+throughout. Removal stays non-structural: trade the position to qty 0.
+
+`(psac:run-dynamic-book-demo)` on the same five-asset book:
+
+```text
+firm P&L over 5 assets: 1215000
+tick AAPL -> 1265000: 4 nodes re-ran (leaf-to-root path + top): pnl-node[AAPL], firm-pnl-merge, firm-pnl-merge, firm-pnl-top
+add TSLA -> 1275000: 0 nodes re-ran (insertion is additive: new nodes only)
+```
+
+A tick re-runs only the leaf-to-root path — O(log n), where the flat universe's
+aggregates each re-read all n positions. Adding TSLA (qty 10, basis 24000, price
+25000: P&L +10000) re-runs *zero* existing nodes: the new pnl node and merge nodes
+compute once at registration. This is reuse-by-structure — the part of SAC trace
+memoization this workload needs, obtained by shaping the graph like a persistent data
+structure instead of timestamping the trace.
+
+## 11. Parallel execution: the same graph, more workers
 
 Everything above runs unchanged in parallel; results and bills are identical by
 construction, because the scheduler only reorders *independent* work.
@@ -288,14 +317,14 @@ Measured on 8 workers (`bench-parallel` / `bench-par-within`, 64 heavy nodes / i
 determinism, and provenance all survive parallel execution — the wave order only
 permutes log entries, never values or bills.
 
-## 11. Formal guarantees (Lean 4, no sorries)
+## 12. Formal guarantees (Lean 4, no sorries)
 
 | Theorem | File | What it guarantees for the demo |
 |---------|------|--------------------------------|
 | `propagate_correct` | `Basic.lean` | incremental propagation ≡ from-scratch: every number after a tick equals a full re-price |
-| `support_sound` | `Support.lean` | full (non-selective) supports are honest: inputs outside the support cannot change a view |
-| `charge_conserves`, `bill_conserves` | `Cost.lean` | bills are exactly conserved — split work sums back to total work |
-| `step_comm`, `eval_perm`, `eval_blocks_comm`, `propagate_waves_correct` | `ParLevel.lean` | parallel propagation and fork-join may reorder independent work without changing any result |
+| `support_sound` | `Support.lean` | full (non-selective) supports are honest: inputs outside the support cannot change a view (data-dependence slice; control dependence is covered by tests) |
+| `charge_conserves`, `bill_conserves`, `blame_head_lowest` | `Cost.lean` | bills are exactly conserved — split work sums back to total work, remainder to the lowest principal |
+| `step_comm`, `eval_perm`, `eval_blocks_comm`, `waves_WF`, `propagate_waves_correct` | `ParLevel.lean` | parallel propagation and fork-join may reorder independent work without changing any result (well-formedness needed only of the canonical order) |
 | `scenario_observe` | `Scenario.lean` | a what-if reads exactly the from-scratch value of the hypothetical world |
 | `scenario_roundtrip` | `Scenario.lean` | scenario rollback restores the base world exactly |
 | `scenario_private` | `Scenario.lean` | a scenario writing outside an observer's support is invisible to that observer |
@@ -304,7 +333,7 @@ The Lean model covers the sequential trace semantics and the order-irrelevance
 arguments; that the runtime establishes their premises (heights, single-writer
 discipline) is covered by the test suite and a CL-vs-Lean differential harness.
 
-## 12. Run it yourself
+## 13. Run it yourself
 
 ```bash
 devcontainer up --workspace-folder .
@@ -313,4 +342,5 @@ devcontainer exec --workspace-folder . bash scripts/build-model.sh # Lean proofs
 devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL vs Lean differential
 ```
 
-then, in a REPL with the `psac` system loaded: `(psac:run-portfolio-demo)`.
+then, in a REPL with the `psac` system loaded: `(psac:run-portfolio-demo)` and
+`(psac:run-dynamic-book-demo)`.

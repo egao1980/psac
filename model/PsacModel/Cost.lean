@@ -2,19 +2,41 @@ import PsacModel.Basic
 
 /-!
 Cost attribution: a re-executed node's cost is split among the principals in its blame
-set by integer division, remainder to the first (lowest) principal — exactly the rule in
-src/cost.lisp. `bill_conserves`: attributed costs sum to the total re-execution work.
+set by integer division, remainder to the first principal — the rule in src/cost.lisp.
+
+CL blame is a fixnum bitmask walked low→high, so blame lists here are strictly
+ascending: duplicate-free (`blame_nodup`) and headed by the lowest principal id
+(`blame_head_lowest`) — "remainder to the first" and CL's "remainder to the lowest id"
+coincide. Empty blame (CL: the whole cost goes to `:system`) is a single-recipient
+charge outside the split; here `charge cost [] = []` and `charge_conserves` requires a
+non-empty blame set.
+
+`bill_conserves`: attributed costs sum to the total re-execution work.
 -/
 
 namespace PsacModel
 
-/-- Split COST among BLAME principals: integer share each, remainder to the first. -/
+/-- Split COST among BLAME principals: integer share each, remainder to the first
+(= lowest id, since blame lists mirror the CL bitmask's ascending walk). -/
 def charge (cost : Nat) (blame : List Nat) : List (Nat × Nat) :=
   match blame with
   | [] => []
   | p :: rest =>
     (p, cost / (rest.length + 1) + cost % (rest.length + 1)) ::
       rest.map (fun q => (q, cost / (rest.length + 1)))
+
+/-- Strictly ascending blame lists (the bitmask walk) carry no duplicate principals. -/
+theorem blame_nodup {blame : List Nat} (h : blame.Pairwise (· < ·)) : blame.Nodup :=
+  h.imp fun hlt => Nat.ne_of_lt hlt
+
+/-- With blame strictly ascending, the head — which `charge` hands the remainder —
+is the lowest principal id, matching CL's remainder-to-lowest rule. -/
+theorem blame_head_lowest {p : Nat} {rest : List Nat}
+    (h : (p :: rest).Pairwise (· < ·)) : ∀ q ∈ p :: rest, p ≤ q := by
+  intro q hq
+  rcases List.mem_cons.mp hq with heq | hmem
+  · exact Nat.le_of_eq heq.symm
+  · exact Nat.le_of_lt ((List.pairwise_cons.mp h).1 q hmem)
 
 theorem sum_append (l r : List Nat) : (l ++ r).sum = l.sum + r.sum := by
   induction l with

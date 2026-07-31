@@ -8,7 +8,7 @@ Concept follows Anderson, Blelloch, Baweja & Acar, *Efficient Parallel Self-Adju
 the sequential core plus a parallel one: level-synchronous change propagation (`propagate-parallel!`)
 and fork-join inside computations (`par`, `par-map`) on an lparallel work-stealing kernel — both
 ~6.3x on 8 workers and proof-backed (`model/PsacModel/ParLevel.lean`). Full timestamped RSP trees
-remain future work.
+are intentionally out of scope: computation topology is static per universe (see Design notes).
 
 ## Layout
 
@@ -34,11 +34,23 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 
 ## Design notes
 
-- **Propagation**: dirty R-nodes processed in (stratum, height) order (bucketed by level; O(1)-ish
-  scheduling); equality cutoff on `write!`. Height-based glitch-free ordering (Jane Street Incremental
-  style); RSP timestamps remain future work. Heights are fixed at node creation; a same-stratum height
-  inversion (stale heights on a pathological dynamic graph) now signals a continuable
-  `height-invariant-error` instead of silently glitching.
+- **Propagation**: dirty R-nodes processed in (stratum, height) order (bucketed by level, minimal
+  bucket found via a lazy min-heap of keys — O(log #levels) even when dirt spans many levels);
+  equality cutoff on `write!`. Height-based glitch-free ordering (Jane Street Incremental style).
+- **Static topology by design**: node read sets are fixed at creation, so heights are computed once
+  and never re-leveled — this is an assumption, not a bug: topology changes are either *additive*
+  (new nodes over live mods, see `adaptive-forest` below) or done by building a fresh universe
+  (universes coexist in one graph; see the multi-universe test and `with-fresh-state`). A graph that
+  breaks the assumption (a write installing a writer at or above a same-stratum reader) signals a
+  continuable `height-invariant-error` instead of silently glitching. Timestamped RSP traces, which
+  would lift the assumption, are intentionally out of scope.
+- **Dynamic membership** (`adaptive-forest`, `make-dynamic-book` / `add-asset!`): aggregates over a
+  growing set are shaped like a persistent data structure — a binary-counter forest of perfect
+  reduction trees. Insertion is path copying, not mutation: O(log n) *new* nodes (amortized O(1))
+  over live mods, no existing node re-registered or re-executed, sibling subtrees physically reused
+  (trace, provenance and all), and consumers hold one stable total mod across insertions. This is
+  reuse-by-structure — the part of SAC memoization these workloads need without RSP timestamps.
+  Removal stays non-structural (trade to qty 0). `(psac:run-dynamic-book-demo)` walks through it.
 - **Parallel propagation** (`propagate-parallel!`): level-synchronous waves on an lparallel kernel.
   By the height invariant, same-level dirty nodes never read each other's outputs, so each
   (stratum, height) level runs as one parallel wave with a barrier between levels. Graph bookkeeping
@@ -62,12 +74,15 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   establishes it is covered by the test suite and differential harness, not the proofs.
 - **Cost**: attributed per re-executed R-node to the *blame set* (principals whose writes caused the re-run).
   Batched deltas split cost by integer division, remainder to the lowest principal id — exact conservation,
-  proved in `model/PsacModel/Cost.lean`.
+  proved in `model/PsacModel/Cost.lean` (`charge_conserves` / `bill_conserves`; blame lists mirror the
+  bitmask's ascending walk, so remainder-to-first *is* remainder-to-lowest — `blame_head_lowest`).
 - **Provenance**: `support` (backward slice, control + data dependence), `explain-update` (last propagation's
   causal chain), `probe` (counterfactuals via propagate-and-rollback). Selective-provenance combinators
   (`:provenance` on `adaptive-read`) sharpen `max`-like ops to their argmax witnesses (all of them, under
-  ties). Note the scope of the guarantee: `support_sound` (Lean) covers the full, non-selective support —
-  inputs outside it cannot change the value. Selective slices explain the current value only; they do not
+  ties). Note the scope of the guarantee: `support_sound` (Lean) covers the full, non-selective *data* slice
+  on the straight-line model — inputs outside it cannot change the value; the control-dependence part of
+  the runtime's `support` (ancestor read sets of nested reads) is covered by the test suite, not the proof.
+  Selective slices explain the current value only; they do not
   bound influence (for a max, any input rising above the current value would change it).
 - **Scenarios** (tagged / private / as-if updates): `with-scenario` + `scenario-write!` +
   `scenario-propagate!` run a named batch of hypothetical writes against the live graph and roll it
@@ -95,7 +110,8 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 ## Worked scenario: portfolio risk (`src/portfolio.lisp`)
 
 A presentation-style walkthrough with diagrams, code fragments, and worked billing
-numbers lives in [`docs/portfolio-demo.md`](docs/portfolio-demo.md).
+numbers lives in [`docs/portfolio-demo.md`](docs/portfolio-demo.md)
+([PDF](docs/portfolio-demo.pdf); rebuild with `scripts/build-docs.sh`).
 
 `(psac:run-portfolio-demo)` — a book of positions priced off ticker mods owned by a market-data
 feed, with adaptive risk views: per-asset P&L, firm P&L, desk P&L, gross exposure, and worst

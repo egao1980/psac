@@ -2,8 +2,14 @@ import PsacModel.Basic
 
 /-!
 Why-provenance: `support p x` is the backward slice of location `x` through program `p`
-down to input locations. `support_sound` mirrors the CL runtime's `psac:support` claim:
-stores agreeing on the support agree on the output.
+down to input locations. `support_sound`: stores agreeing on the support agree on the
+output.
+
+Scope: this is the *data-dependence* slice of straight-line binary programs. The CL
+runtime's `psac:support` additionally walks control dependence (ancestor read sets of
+nested `adaptive-read`s); on flat graphs like the harness's the two coincide, but the
+control-dependence part is covered by the test suite, not by this proof. Selective
+(`:provenance`) slices are likewise out of scope — they explain the current value only.
 -/
 
 namespace PsacModel

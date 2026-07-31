@@ -6,26 +6,23 @@
 ;;;; propagation are consistent with the latest policy. Height order makes propagation
 ;;;; glitch-free for DAGs (writers always run before their readers).
 ;;;;
-;;;; v1 limitation: heights are computed at node creation; pathological dynamic graphs
-;;;; that invert writer/reader heights mid-flight are not re-leveled. RSP-tree timestamps
-;;;; replace this in the parallel phase.
-
-(defun dirty-key< (a b)
-  "Order (stratum . height) bucket keys."
-  (or (< (car a) (car b))
-      (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+;;;; Design assumption: computation topology is static per universe -- read sets are
+;;;; fixed at node creation, so heights are computed once and never re-leveled. Topology
+;;;; changes are either additive (new nodes over live mods; see ADAPTIVE-FOREST) or done
+;;;; by building a fresh universe (universes coexist in one graph; see the multi-universe
+;;;; test and WITH-FRESH-STATE). DIRTY-READERS! signals a continuable
+;;;; HEIGHT-INVARIANT-ERROR if a graph breaks the assumption, instead of glitching.
 
 (defun min-dirty-key ()
-  "Minimal (stratum . height) key with a non-empty bucket, dropping drained buckets.
-O(#distinct levels), not O(#dirty nodes)."
-  (let ((best nil))
-    (maphash (lambda (key bucket)
-               (if (null bucket)
-                   (remhash key *dirty-buckets*)
-                   (when (or (null best) (dirty-key< key best))
-                     (setf best key))))
-             *dirty-buckets*)
-    best))
+  "Minimal (stratum . height) key with a non-empty bucket, discarding stale heap
+entries for drained buckets. O(log #levels) amortized (DIRTY-KEY< and the heap live
+in trace.lisp)."
+  (loop for key = (dirty-heap-peek *dirty-heap*)
+        while key
+        do (if (gethash key *dirty-buckets*)
+               (return key)
+               (progn (dirty-heap-pop *dirty-heap*)
+                      (remhash key *dirty-buckets*)))))
 
 (defun pop-min-dirty ()
   "Remove and return a live dirty node at the minimal (stratum, height), or NIL."
@@ -60,9 +57,7 @@ O(#distinct levels), not O(#dirty nodes)."
             ;; a signaling thunk must not leave the node silently clean: re-enqueue it
             ;; (blame intact) so the next PROPAGATE! retries instead of no-opping
             (unless completed
-              (setf (rnode-dirty-p node) t)
-              (push node (gethash (cons (rnode-stratum node) (rnode-height node))
-                                  *dirty-buckets*)))))))
+              (enqueue-dirty! node))))))
     (unless *billing-suspended*
       (setf *last-update-log* (nreverse *propagation-log*)
             *last-bill* bill))

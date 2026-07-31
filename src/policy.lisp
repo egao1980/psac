@@ -126,6 +126,7 @@ to lparallel workers via *CONVEYED-STATE*; other threads spawned inside BODY do 
 inherit them. Any new stateful defvar readable from worker code must be added here,
 to RESET-ALL!, and to *CONVEYED-STATE*."
   `(let* ((*dirty-buckets* (make-hash-table :test #'equal))
+          (*dirty-heap* (make-dirty-heap))
           (*current-rnode* nil)
           (*last-bill* nil)
           (*last-update-log* '())

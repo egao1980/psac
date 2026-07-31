@@ -7,11 +7,64 @@
 ;;;; subtree. Edges are bidirectional: mod -> readers (propagation) and node -> mods-read
 ;;;; (provenance slicing).
 
+;;;; Dirty-key heap ------------------------------------------------------------
+;;;; Binary min-heap of (stratum . height) bucket keys backing MIN-DIRTY-KEY.
+
+(defun dirty-key< (a b)
+  "Order (stratum . height) bucket keys."
+  (or (< (car a) (car b))
+      (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+
+(defun make-dirty-heap ()
+  (make-array 8 :adjustable t :fill-pointer 0))
+
+(defun dirty-heap-push (heap key)
+  (vector-push-extend key heap)
+  (let ((i (1- (fill-pointer heap))))
+    (loop while (plusp i)
+          do (let ((parent (ash (1- i) -1)))
+               (unless (dirty-key< (aref heap i) (aref heap parent))
+                 (return))
+               (rotatef (aref heap i) (aref heap parent))
+               (setf i parent)))))
+
+(defun dirty-heap-peek (heap)
+  (when (plusp (fill-pointer heap))
+    (aref heap 0)))
+
+(defun dirty-heap-pop (heap)
+  "Remove and return the minimal key, or NIL."
+  (when (plusp (fill-pointer heap))
+    (let ((top (aref heap 0))
+          (last (vector-pop heap))
+          (n (fill-pointer heap)))
+      (when (plusp n)
+        (setf (aref heap 0) last)
+        (let ((i 0))
+          (loop
+            (let ((l (+ (* 2 i) 1))
+                  (smallest i))
+              (when (and (< l n) (dirty-key< (aref heap l) (aref heap smallest)))
+                (setf smallest l))
+              (when (and (< (1+ l) n) (dirty-key< (aref heap (1+ l)) (aref heap smallest)))
+                (setf smallest (1+ l)))
+              (when (= smallest i) (return))
+              (rotatef (aref heap i) (aref heap smallest))
+              (setf i smallest)))))
+      top)))
+
+;;;; Trace state ----------------------------------------------------------------
+
 (defvar *rnode-counter* (list 0))   ; boxed; see *principal-counter*
 (defvar *current-rnode* nil)
 ;; Dirty live R-nodes bucketed by (stratum . height); the minimal bucket drains first.
 ;; Nodes marked dead or clean while enqueued are skipped lazily on removal.
 (defvar *dirty-buckets* (make-hash-table :test #'equal))
+;; Min-heap of bucket keys, so finding the minimal non-empty bucket is O(log #levels)
+;; instead of a scan over all buckets (which is quadratic when dirt spans many levels).
+;; A key is pushed when its bucket goes empty -> non-empty; entries left behind by
+;; drained buckets are discarded lazily in MIN-DIRTY-KEY.
+(defvar *dirty-heap* (make-dirty-heap))
 (defvar *last-update-log* '())
 ;; Innermost active scenario (see scenario.lisp); declared here so PAR can convey it.
 (defvar *current-scenario* nil)
@@ -64,9 +117,20 @@
 (defun last-update-log ()
   *last-update-log*)
 
+(defun enqueue-dirty! (node)
+  "Mark NODE dirty and enqueue it at its (stratum . height) bucket, keeping the key
+heap in sync. Callers in parallel waves hold the graph lock."
+  (setf (rnode-dirty-p node) t)
+  (let* ((key (cons (rnode-stratum node) (rnode-height node)))
+         (bucket (gethash key *dirty-buckets*)))
+    (setf (gethash key *dirty-buckets*) (cons node bucket))
+    (unless bucket
+      (dirty-heap-push *dirty-heap* key))))
+
 (defun reset-graph! ()
   "Clear global propagation state (queue, logs, bills). Mods and nodes are owned by callers."
   (clrhash *dirty-buckets*)
+  (setf (fill-pointer *dirty-heap*) 0)
   (setf *last-update-log* '()
         *last-bill* nil
         *current-rnode* nil)
@@ -213,5 +277,4 @@ an external update blamed on *CURRENT-PRINCIPAL*. Returns T if the value changed
                   'height-invariant-error :writer w :reader r))
         (setf (rnode-blame r) (logior (rnode-blame r) (modref-blame mod)))
         (unless (rnode-dirty-p r)
-          (setf (rnode-dirty-p r) t)
-          (push r (gethash (cons (rnode-stratum r) (rnode-height r)) *dirty-buckets*)))))))
+          (enqueue-dirty! r))))))

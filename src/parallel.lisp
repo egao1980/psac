@@ -19,7 +19,7 @@
 (defvar *default-workers* 4)
 
 (defparameter *conveyed-state*
-  '(*dirty-buckets* *enforce-labels* *billing-suspended*
+  '(*dirty-buckets* *dirty-heap* *enforce-labels* *billing-suspended*
     *current-principal* *current-scenario* *scenarios*
     *member-mods* *grant-mods* *allowed-mods*
     *principal-ids* *principal-names*
@@ -70,9 +70,7 @@ one-element boxes precisely so this conveyance shares the cell.")
       ;; mirror PROPAGATE!: a signaling thunk re-enqueues its node (blame intact)
       (unless completed
         (with-graph-lock
-          (setf (rnode-dirty-p node) t)
-          (push node (gethash (cons (rnode-stratum node) (rnode-height node))
-                              *dirty-buckets*)))))
+          (enqueue-dirty! node))))
     *propagation-log*))
 
 (defun propagate-parallel! (&key workers)

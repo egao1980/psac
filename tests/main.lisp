@@ -540,6 +540,33 @@
       (ok (signals (tick! u "NOPE" 1) 'error))
       (ok (signals (book-trade! u "NOPE" 1 1) 'error)))))
 
+(deftest-fresh dynamic-book-membership
+  (testing "adaptive-forest book: additive insertion, O(log n) ticks, exact totals"
+    (let ((book (make-dynamic-book '(("A" 100 10 90) ("B" 200 5 210) ("C" 50 20 40)))))
+      (flet ((expected ()
+               (loop for a in (dynamic-book-assets book)
+                     sum (* (mod-value (asset-qty-mod a))
+                            (- (mod-value (asset-price-mod a))
+                               (mod-value (asset-basis-mod a)))))))
+        (ok (= (mod-value (dynamic-book-firm-pnl book)) (expected)))
+        ;; insertion is additive: registration does the work; propagation re-runs nothing
+        (add-asset! book "D" 70 3 60)
+        (propagate!)
+        (ok (null (last-update-log)))
+        (ok (= (mod-value (dynamic-book-firm-pnl book)) (expected)))
+        ;; grow to 16 members and tick one: only pnl node + tree path + top re-run
+        (loop for i from 4 below 16
+              do (add-asset! book (format nil "T~a" i) 100 1 90))
+        (ok (= (mod-value (dynamic-book-firm-pnl book)) (expected)))
+        (let ((a (find "A" (dynamic-book-assets book)
+                       :key #'asset-ticker :test #'equal)))
+          (with-principal ("feed")
+            (write! (asset-price-mod a) 120))
+          (propagate!)
+          (ok (= (mod-value (dynamic-book-firm-pnl book)) (expected)))
+          ;; 16 = one rank-4 tree: pnl node + 4 merges + top
+          (ok (<= (length (last-update-log)) 6)))))))
+
 (deftest-fresh harness-scenario
   (testing "JSON scenario runs and snapshots match hand computation"
     (let ((json (run-scenario (asdf:system-relative-pathname :psac "scenarios/basic.json"))))
