@@ -3,4 +3,3 @@ model/.lake/
 out/
 *.fasl
 *.olean
-qlfile.lock

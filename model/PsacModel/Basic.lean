@@ -110,11 +110,14 @@ theorem propagate_correct : ∀ {p : List Node}, WF p →
       rw [eval_preserves h3]
       simp [step]
     have key : propStep (eval (step σ₀ n) p) σ₁ n = step σ₁ n := by
+      unfold propStep
       by_cases hcond : σ₁ n.in1 = eval (step σ₀ n) p n.in1 ∧ σ₁ n.in2 = eval (step σ₀ n) p n.in2
-      · have e1 : σ₁ n.in1 = σ₀ n.in1 := hcond.1.trans hin1
+      · rw [if_pos hcond, hout]
+        have e1 : σ₁ n.in1 = σ₀ n.in1 := hcond.1.trans hin1
         have e2 : σ₁ n.in2 = σ₀ n.in2 := hcond.2.trans hin2
-        simp [propStep, hcond, step, hout, e1, e2]
-      · simp [propStep, hcond]
+        unfold step
+        rw [e1, e2]
+      · rw [if_neg hcond]
     calc propagate (eval σ₀ (n :: p)) σ₁ (n :: p)
         = propagate (eval (step σ₀ n) p) (propStep (eval (step σ₀ n) p) σ₁ n) p := rfl
       _ = propagate (eval (step σ₀ n) p) (step σ₁ n) p := by rw [key]

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Post-create: Lean toolchain (elan, pinned by model/lean-toolchain) + CL deps (qlot) + ASDF registration.
 set -euo pipefail
+export PATH="$HOME/.roswell/bin:$HOME/.elan/bin:$PATH"
 
 # --- Lean via elan ---
 if [ ! -x "$HOME/.elan/bin/elan" ]; then
@@ -8,7 +9,10 @@ if [ ! -x "$HOME/.elan/bin/elan" ]; then
     | sh -s -- -y --default-toolchain none
 fi
 export PATH="$HOME/.elan/bin:$PATH"
-(cd model && elan toolchain install "$(cat lean-toolchain)")
+toolchain="$(cat model/lean-toolchain)"
+if ! elan toolchain list | grep -q "${toolchain#*:}"; then
+  elan toolchain install "$toolchain"
+fi
 
 # --- Common Lisp deps ---
 qlot install

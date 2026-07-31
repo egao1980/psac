@@ -1,10 +1,10 @@
+import PsacModel.Basic
+
 /-!
 Why-provenance: `support p x` is the backward slice of location `x` through program `p`
 down to input locations. `support_sound` mirrors the CL runtime's `psac:support` claim:
 stores agreeing on the support agree on the output.
 -/
-
-import PsacModel.Basic
 
 namespace PsacModel
 

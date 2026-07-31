@@ -1,10 +1,10 @@
+import PsacModel.Basic
+
 /-!
 Cost attribution: a re-executed node's cost is split among the principals in its blame
 set by integer division, remainder to the first (lowest) principal — exactly the rule in
 src/cost.lisp. `bill_conserves`: attributed costs sum to the total re-execution work.
 -/
-
-import PsacModel.Basic
 
 namespace PsacModel
 
@@ -16,18 +16,28 @@ def charge (cost : Nat) (blame : List Nat) : List (Nat × Nat) :=
     (p, cost / (rest.length + 1) + cost % (rest.length + 1)) ::
       rest.map (fun q => (q, cost / (rest.length + 1)))
 
+theorem sum_append (l r : List Nat) : (l ++ r).sum = l.sum + r.sum := by
+  induction l with
+  | nil => simp
+  | cons a l ih => simp [ih, Nat.add_assoc]
+
 theorem sum_map_const {α : Type _} (l : List α) (c : Nat) :
     (l.map (fun _ => c)).sum = l.length * c := by
   induction l with
   | nil => simp
   | cons a l ih => simp [ih, Nat.succ_mul, Nat.add_comm]
 
+/-- A single node's cost is exactly conserved by the split. -/
 theorem charge_conserves (cost : Nat) (blame : List Nat) (h : blame ≠ []) :
     ((charge cost blame).map Prod.snd).sum = cost := by
   match blame with
   | [] => exact absurd rfl h
   | p :: rest =>
-    simp [charge, List.map_map, Function.comp, sum_map_const]
+    have hmap : ((rest.map (fun q => (q, cost / (rest.length + 1)))).map Prod.snd)
+        = rest.map (fun _ => cost / (rest.length + 1)) := by
+      rw [List.map_map]
+      simp [Function.comp]
+    simp only [charge, List.map_cons, List.sum_cons, hmap, sum_map_const]
     have hsm : (rest.length + 1) * (cost / (rest.length + 1)) =
         rest.length * (cost / (rest.length + 1)) + cost / (rest.length + 1) :=
       Nat.succ_mul _ _
@@ -41,11 +51,13 @@ structure Exec where
   cost : Nat
   blame : List Nat
 
-def totalCost (log : List Exec) : Nat :=
-  (log.map (·.cost)).sum
+def totalCost : List Exec → Nat
+  | [] => 0
+  | e :: log => e.cost + totalCost log
 
-def bills (log : List Exec) : List (Nat × Nat) :=
-  log.flatMap (fun e => charge e.cost e.blame)
+def bills : List Exec → List (Nat × Nat)
+  | [] => []
+  | e :: log => charge e.cost e.blame ++ bills log
 
 /-- Attribution is exactly conserved over a whole propagation. -/
 theorem bill_conserves (log : List Exec) (h : ∀ e ∈ log, e.blame ≠ []) :
@@ -55,11 +67,7 @@ theorem bill_conserves (log : List Exec) (h : ∀ e ∈ log, e.blame ≠ []) :
   | cons e log ih =>
     have he : e.blame ≠ [] := h e (List.mem_cons_self e log)
     have hl : ∀ x ∈ log, x.blame ≠ [] := fun x hx => h x (List.mem_cons_of_mem e hx)
-    simp only [bills, totalCost, List.flatMap_cons, List.map_cons, List.map_append,
-               List.sum_append, List.sum_cons]
-    rw [charge_conserves e.cost e.blame he]
-    have := ih hl
-    simp only [bills, totalCost] at this
-    rw [this]
+    show ((charge e.cost e.blame ++ bills log).map Prod.snd).sum = e.cost + totalCost log
+    rw [List.map_append, sum_append, charge_conserves e.cost e.blame he, ih hl]
 
 end PsacModel

@@ -1,12 +1,12 @@
+import Lean.Data.Json
+import PsacModel
+
 /-!
 Executable oracle for the differential harness. Reads a scenario JSON, evaluates it
 from scratch after each update batch (the specification), cross-checks `propagate`
 against `eval` on every step (a runtime instance of `propagate_correct`), and prints
 canonical JSON that must match the CL runtime's output byte-for-byte.
 -/
-
-import Lean.Data.Json
-import PsacModel
 
 open PsacModel
 open Lean (Json)
