@@ -1,0 +1,20 @@
+{
+  "mods": [
+    {"name": "a", "value": 2},
+    {"name": "b", "value": -5},
+    {"name": "c", "value": 11},
+    {"name": "d", "value": 0}
+  ],
+  "nodes": [
+    {"op": "mul", "inputs": ["a", "b"], "out": "p1"},
+    {"op": "sub", "inputs": ["c", "d"], "out": "p2"},
+    {"op": "min", "inputs": ["p1", "p2"], "out": "p3"},
+    {"op": "max", "inputs": ["p1", "p2"], "out": "p4"},
+    {"op": "add", "inputs": ["p3", "p4"], "out": "p5"}
+  ],
+  "updates": [
+    [{"mod": "d", "value": 20, "principal": "alice"}],
+    [{"mod": "a", "value": -1, "principal": "bob"}],
+    [{"mod": "b", "value": 3, "principal": "carol"}, {"mod": "c", "value": -7, "principal": "dave"}]
+  ]
+}

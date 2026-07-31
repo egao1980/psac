@@ -1,0 +1,18 @@
+{
+  "mods": [
+    {"name": "x1", "value": 3},
+    {"name": "x2", "value": 4},
+    {"name": "x3", "value": 5},
+    {"name": "x4", "value": 6}
+  ],
+  "nodes": [
+    {"op": "add", "inputs": ["x1", "x2"], "out": "s1"},
+    {"op": "add", "inputs": ["x3", "x4"], "out": "s2"},
+    {"op": "add", "inputs": ["s1", "s2"], "out": "s3"},
+    {"op": "max", "inputs": ["s1", "s2"], "out": "m1"}
+  ],
+  "updates": [
+    [{"mod": "x1", "value": 10, "principal": "alice"}],
+    [{"mod": "x2", "value": -3, "principal": "bob"}, {"mod": "x3", "value": 7, "principal": "carol"}]
+  ]
+}
