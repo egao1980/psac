@@ -1,0 +1,9 @@
+name = "PsacModel"
+defaultTargets = ["PsacModel", "oracle"]
+
+[[lean_lib]]
+name = "PsacModel"
+
+[[lean_exe]]
+name = "oracle"
+root = "Main"

@@ -1,0 +1,11 @@
+{
+  "name": "psac",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/egao1980/features/roswell:1": {}
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteEnv": {
+    "PATH": "/home/vscode/.elan/bin:${containerEnv:PATH}"
+  }
+}
