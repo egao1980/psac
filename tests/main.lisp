@@ -354,6 +354,39 @@
       (revoke! "bob" :desk-b)
       (ok (eq (request u "bob" :desk-b-pnl) :denied)))))
 
+(deftest multi-universe
+  (testing "universes coexist in one graph: independent values, bills, ledgers, what-ifs"
+    (reset-all!)
+    ;; same tickers on purpose: mods are per-universe structs, names are just labels.
+    ;; NOTE interleaved single-thread use only -- *last-bill* / *last-update-log* and the
+    ;; scenario stack are global, and concurrent PROPAGATE! calls are not supported.
+    (let ((u1 (make-universe '(("AAPL" 19000 100 18000 2)) '("AAPL")))
+          (u2 (make-universe '(("AAPL" 20000 10 19000 2)) '("AAPL"))))
+      (ok (= (mod-value (universe-firm-pnl u1)) 100000))
+      (ok (= (mod-value (universe-firm-pnl u2)) 10000))
+      ;; a tick in one universe re-runs only that universe's nodes
+      (tick! u1 "AAPL" 19500)
+      (ok (= (mod-value (universe-firm-pnl u1)) 150000))
+      (ok (= (mod-value (universe-firm-pnl u2)) 10000))
+      (ok (= (bill-total) 16))  ; pnl 1 + firm 5 + desk 3 + expo 4 + worst 3, u1 only
+      ;; and vice versa
+      (tick! u2 "AAPL" 21000)
+      (ok (= (mod-value (universe-firm-pnl u2)) 20000))
+      (ok (= (mod-value (universe-firm-pnl u1)) 150000))
+      (ok (= (bill-total) 16))
+      ;; request ledgers live on the universe struct: charging u1 leaves u2's ledger empty
+      (request u1 "alice" :firm-pnl)
+      (ok (equal (ledger-alist u2) '()))
+      ;; a what-if against u1 is invisible in u2 and rolls back cleanly
+      (multiple-value-bind (vals sc)
+          (what-if (list (cons (asset-price-mod (find-asset u1 "AAPL")) 18000))
+                   (list (universe-firm-pnl u1) (universe-firm-pnl u2))
+                   :tag "multi-u" :owner "alice")
+        (declare (ignore sc))
+        (ok (equal vals '(0 20000))))
+      (ok (= (mod-value (universe-firm-pnl u1)) 150000))
+      (ok (= (mod-value (universe-firm-pnl u2)) 20000)))))
+
 (deftest harness-scenario
   (testing "JSON scenario runs and snapshots match hand computation"
     (let ((json (run-scenario (asdf:system-relative-pathname :psac "scenarios/basic.json"))))
