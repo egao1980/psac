@@ -6,9 +6,12 @@
 ;;;; propagation are consistent with the latest policy. Height order makes propagation
 ;;;; glitch-free for DAGs (writers always run before their readers).
 ;;;;
-;;;; v1 limitation: heights are computed at node creation; pathological dynamic graphs
-;;;; that invert writer/reader heights mid-flight are not re-leveled. RSP-tree timestamps
-;;;; replace this in the parallel phase.
+;;;; Design assumption: computation topology is static per universe -- read sets are
+;;;; fixed at node creation, so heights are computed once and never re-leveled. Topology
+;;;; changes are either additive (new nodes over live mods; see ADAPTIVE-FOREST) or done
+;;;; by building a fresh universe (universes coexist in one graph; see the multi-universe
+;;;; test and WITH-FRESH-STATE). DIRTY-READERS! signals a continuable
+;;;; HEIGHT-INVARIANT-ERROR if a graph breaks the assumption, instead of glitching.
 
 (defun min-dirty-key ()
   "Minimal (stratum . height) key with a non-empty bucket, discarding stale heap

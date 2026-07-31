@@ -29,9 +29,12 @@
    #:reset-policy! #:reset-all! #:with-fresh-state
    ;; examples
    #:adaptive-map #:adaptive-filter #:adaptive-reduce #:adaptive-max #:adaptive-avg
+   #:adaptive-forest #:forest-insert! #:forest-total #:forest-count
    ;; portfolio scenario
    #:make-universe #:tick! #:book-trade! #:request #:ledger-alist #:risk-report
    #:run-portfolio-demo #:*request-fee* #:find-asset
+   #:make-dynamic-book #:add-asset! #:dynamic-book-assets #:dynamic-book-firm-pnl
+   #:run-dynamic-book-demo
    #:universe-firm-pnl #:universe-desk-pnl #:universe-exposure #:universe-worst
    #:asset-ticker #:asset-price-mod #:asset-qty-mod #:asset-basis-mod #:asset-pnl-mod
    ;; harness

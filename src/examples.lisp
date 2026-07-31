@@ -62,6 +62,77 @@ ties) explain the result. Selective slices explain the current value; only the f
                    :name "avg-node")
     out))
 
+;;;; Dynamic membership: binary-counter forest ---------------------------------
+;;;;
+;;;; ADAPTIVE-REDUCE fixes its member set at build time. ADAPTIVE-FOREST aggregates a
+;;;; *growing* set the way a persistent data structure would: SLOTS[r] holds the root
+;;;; mod of a perfect reduction tree over 2^r members (the binary-counter shape), and
+;;;; FOREST-INSERT! is a counter increment -- carry-merging trees of equal rank into
+;;;; O(log n) *new* nodes (amortized O(1)) that read existing root mods. No existing
+;;;; node is re-registered or re-executed and its read set never changes (the project's
+;;;; static-topology assumption); untouched subtrees are physically reused, trace and
+;;;; all. Only the top reducer -- which folds the <= log2 n roots into the stable TOTAL
+;;;; mod -- is killed and rebuilt per insert, so consumers can hold TOTAL forever.
+
+(defstruct (forest (:constructor %make-forest))
+  fn
+  name
+  ;; slots[r] = root mod of a perfect tree over 2^r members, or NIL
+  (slots (make-array 4 :adjustable t :initial-element nil))
+  total
+  top
+  (count 0 :type fixnum))
+
+(defun adaptive-forest (fn &key (name "forest"))
+  "Balanced aggregate (by associative FN) over a dynamic set of mods; grow it with
+FOREST-INSERT!, read it from the stable mod (FOREST-TOTAL f)."
+  (%make-forest :fn fn :name name
+                :total (make-mod nil :name (format nil "~a-total" name))))
+
+(defun %forest-merge (f a b)
+  (let ((out (make-mod nil :name (format nil "~a-out~a" (forest-name f)
+                                          (incf (car *mod-counter*)))))
+        (fn (forest-fn f)))
+    (register-read (list a b)
+                   (lambda (x y) (write! out (funcall fn x y)))
+                   :name (format nil "~a-merge" (forest-name f)))
+    out))
+
+(defun %forest-retop! (f)
+  ;; the one replaced node: kill the old top so the single-writer discipline lets the
+  ;; new one write TOTAL; everything below is reused as-is
+  (when (forest-top f)
+    (kill-node (forest-top f)))
+  (let ((roots (loop for r across (forest-slots f) when r collect r))
+        (total (forest-total f))
+        (fn (forest-fn f)))
+    (setf (forest-top f)
+          (register-read roots
+                         (lambda (&rest vals) (write! total (reduce fn vals)))
+                         :name (format nil "~a-top" (forest-name f))))))
+
+(defun forest-insert! (f mod)
+  "Add MOD to the forest: a binary-counter increment creating O(log n) new merge nodes
+over live mods, plus a rebuilt top reducer. Nothing existing re-runs; readers of
+(FOREST-TOTAL f) see the new aggregate after the next PROPAGATE!."
+  (let ((carry mod)
+        (rank 0))
+    (loop
+      (when (>= rank (length (forest-slots f)))
+        (setf (forest-slots f)
+              (adjust-array (forest-slots f) (1+ rank) :initial-element nil)))
+      (let ((existing (aref (forest-slots f) rank)))
+        (cond ((null existing)
+               (setf (aref (forest-slots f) rank) carry)
+               (return))
+              (t
+               (setf carry (%forest-merge f existing carry)
+                     (aref (forest-slots f) rank) nil)
+               (incf rank)))))
+    (incf (forest-count f))
+    (%forest-retop! f)
+    (forest-total f)))
+
 ;;;; Parallel benchmark -------------------------------------------------------
 
 (defun heavy-work (v)

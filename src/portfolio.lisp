@@ -49,6 +49,20 @@
       (error "unknown ticker ~s in universe (have: ~{~a~^, ~})"
              ticker (mapcar #'asset-ticker (universe-assets universe)))))
 
+(defun %make-priced-asset (ticker price qty basis)
+  "Feed-owned price mod, position mods, and the adaptive per-asset P&L node."
+  (let* ((price-mod (with-principal ("feed")
+                      (make-mod price :name (format nil "price[~a]" ticker))))
+         (qty-mod (make-mod qty :name (format nil "qty[~a]" ticker)))
+         (basis-mod (make-mod basis :name (format nil "basis[~a]" ticker)))
+         (pnl-mod (make-mod nil :name (format nil "pnl[~a]" ticker))))
+    (register-read (list price-mod qty-mod basis-mod)
+                   (lambda (p q b) (write! pnl-mod (* q (- p b))))
+                   :name (format nil "pnl-node[~a]" ticker)
+                   :cost 1)
+    (make-asset :ticker ticker :price-mod price-mod :qty-mod qty-mod
+                :basis-mod basis-mod :pnl-mod pnl-mod)))
+
 (defun make-universe (specs desk-tickers)
   "SPECS: list of (ticker price qty basis source-cost); prices in integer cents.
 DESK-TICKERS: the subset Bob's desk holds. Builds all adaptive views and the access
@@ -57,19 +71,9 @@ policy. Assumes a fresh graph (caller does RESET-GRAPH! / RESET-POLICY!)."
     ;; --- inputs and per-asset P&L ---------------------------------------------
     (dolist (spec specs)
       (destructuring-bind (ticker price qty basis source-cost) spec
-        (let* ((price-mod (with-principal ("feed")
-                            (make-mod price :name (format nil "price[~a]" ticker))))
-               (qty-mod (make-mod qty :name (format nil "qty[~a]" ticker)))
-               (basis-mod (make-mod basis :name (format nil "basis[~a]" ticker)))
-               (pnl-mod (make-mod nil :name (format nil "pnl[~a]" ticker))))
-          (setf (gethash price-mod (universe-data-costs u)) source-cost)
-          (register-read (list price-mod qty-mod basis-mod)
-                         (lambda (p q b) (write! pnl-mod (* q (- p b))))
-                         :name (format nil "pnl-node[~a]" ticker)
-                         :cost 1)
-          (push (make-asset :ticker ticker :price-mod price-mod :qty-mod qty-mod
-                            :basis-mod basis-mod :pnl-mod pnl-mod)
-                (universe-assets u)))))
+        (let ((a (%make-priced-asset ticker price qty basis)))
+          (setf (gethash (asset-price-mod a) (universe-data-costs u)) source-cost)
+          (push a (universe-assets u)))))
     (setf (universe-assets u) (nreverse (universe-assets u)))
     ;; --- risk measures (predefined calculation costs) -------------------------
     (let* ((assets (universe-assets u))
@@ -235,6 +239,76 @@ update, and a counterfactual probe (SHOCK-TICKER moved by SHOCK-BPS basis points
         (format s "  if ~a moved ~abps (~a -> ~a): firm P&L would be ~a (now ~a)~%"
                 shock-ticker shock-bps price shocked
                 would-be (mod-value (universe-firm-pnl universe)))))))
+
+;;;; Dynamic membership: firm P&L over a growing book -----------------------------
+;;;;
+;;;; MAKE-UNIVERSE fixes every read set at build time -- the project's static-topology
+;;;; assumption: node read sets never change, heights are computed once, and a topology
+;;;; change means building a new universe. Its flat firm-pnl node reads all n positions,
+;;;; so *if* it re-registered on membership change it would re-sum the whole book.
+;;;;
+;;;; The dynamic book shows the sanctioned in-place alternative: shape the aggregate
+;;;; like a persistent data structure (ADAPTIVE-FOREST) and make membership change
+;;;; *additive* -- path copying, not mutation. ADD-ASSET! creates one pnl node plus
+;;;; O(log n) merge nodes over live mods; no existing node is re-registered or
+;;;; re-executed, and sibling subtrees are physically reused, trace, provenance and
+;;;; all. That is reuse-by-structure: the part of SAC memoization this workload needs,
+;;;; without timestamped RSP traces. A tick still re-runs only the leaf-to-root path
+;;;; (O(log n)); consumers hold the stable (DYNAMIC-BOOK-FIRM-PNL book) mod across
+;;;; insertions. Removal stays non-structural: trade the position to qty 0 (P&L 0 is
+;;;; the identity of +), keeping topology static.
+
+(defstruct (dynamic-book (:constructor %make-dynamic-book))
+  (assets '() :type list)
+  forest)
+
+(defun dynamic-book-firm-pnl (book)
+  "Stable firm P&L mod; survives ADD-ASSET!, so views and requests can hold it."
+  (forest-total (dynamic-book-forest book)))
+
+(defun add-asset! (book ticker price qty basis)
+  "Admit a new position into BOOK: one pnl node + O(log n) forest merge nodes are
+created; nothing existing re-runs. Readers of the firm P&L see the new total after
+the next PROPAGATE!."
+  (let ((a (%make-priced-asset ticker price qty basis)))
+    (push a (dynamic-book-assets book))
+    (forest-insert! (dynamic-book-forest book) (asset-pnl-mod a))
+    a))
+
+(defun make-dynamic-book (specs)
+  "SPECS: ((ticker price qty basis) ...). Firm P&L over an ADAPTIVE-FOREST, so the
+book accepts new assets in O(log n) new nodes each."
+  (let ((book (%make-dynamic-book :forest (adaptive-forest #'+ :name "firm-pnl"))))
+    (loop for (ticker price qty basis) in specs
+          do (add-asset! book ticker price qty basis))
+    book))
+
+(defun run-dynamic-book-demo (&key (stream *standard-output*))
+  "Dynamic membership demo: ticks re-run O(log n) nodes, ADD-ASSET! re-runs zero."
+  (with-fresh-state
+    (let ((book (make-dynamic-book '(("AAPL" 19000 100 18000)
+                                     ("MSFT" 41000 50 40000)
+                                     ("GOOG" 17500 -30 18000)
+                                     ("BTC" 6500000 2 6000000)
+                                     ("EURUSD" 10850 1000 10800)))))
+      (format stream "~&firm P&L over ~a assets: ~a~%"
+              (forest-count (dynamic-book-forest book))
+              (mod-value (dynamic-book-firm-pnl book)))
+      (with-principal ("feed")
+        (write! (asset-price-mod (find "AAPL" (dynamic-book-assets book)
+                                       :key #'asset-ticker :test #'equal))
+                19500))
+      (propagate!)
+      (format stream "tick AAPL -> ~a: ~a nodes re-ran (leaf-to-root path + top): ~{~a~^, ~}~%"
+              (mod-value (dynamic-book-firm-pnl book))
+              (length (last-update-log))
+              (mapcar (lambda (e) (getf e :node)) (explain-update)))
+      (add-asset! book "TSLA" 25000 10 24000)
+      (propagate!)
+      (format stream "add TSLA -> ~a: ~a nodes re-ran (insertion is additive: new nodes only)~%"
+              (mod-value (dynamic-book-firm-pnl book))
+              (length (last-update-log)))
+      book)))
 
 ;;;; Demo driver ------------------------------------------------------------------
 

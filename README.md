@@ -8,7 +8,7 @@ Concept follows Anderson, Blelloch, Baweja & Acar, *Efficient Parallel Self-Adju
 the sequential core plus a parallel one: level-synchronous change propagation (`propagate-parallel!`)
 and fork-join inside computations (`par`, `par-map`) on an lparallel work-stealing kernel — both
 ~6.3x on 8 workers and proof-backed (`model/PsacModel/ParLevel.lean`). Full timestamped RSP trees
-remain future work.
+are intentionally out of scope: computation topology is static per universe (see Design notes).
 
 ## Layout
 
@@ -34,11 +34,23 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 
 ## Design notes
 
-- **Propagation**: dirty R-nodes processed in (stratum, height) order (bucketed by level; O(1)-ish
-  scheduling); equality cutoff on `write!`. Height-based glitch-free ordering (Jane Street Incremental
-  style); RSP timestamps remain future work. Heights are fixed at node creation; a same-stratum height
-  inversion (stale heights on a pathological dynamic graph) now signals a continuable
-  `height-invariant-error` instead of silently glitching.
+- **Propagation**: dirty R-nodes processed in (stratum, height) order (bucketed by level, minimal
+  bucket found via a lazy min-heap of keys — O(log #levels) even when dirt spans many levels);
+  equality cutoff on `write!`. Height-based glitch-free ordering (Jane Street Incremental style).
+- **Static topology by design**: node read sets are fixed at creation, so heights are computed once
+  and never re-leveled — this is an assumption, not a bug: topology changes are either *additive*
+  (new nodes over live mods, see `adaptive-forest` below) or done by building a fresh universe
+  (universes coexist in one graph; see the multi-universe test and `with-fresh-state`). A graph that
+  breaks the assumption (a write installing a writer at or above a same-stratum reader) signals a
+  continuable `height-invariant-error` instead of silently glitching. Timestamped RSP traces, which
+  would lift the assumption, are intentionally out of scope.
+- **Dynamic membership** (`adaptive-forest`, `make-dynamic-book` / `add-asset!`): aggregates over a
+  growing set are shaped like a persistent data structure — a binary-counter forest of perfect
+  reduction trees. Insertion is path copying, not mutation: O(log n) *new* nodes (amortized O(1))
+  over live mods, no existing node re-registered or re-executed, sibling subtrees physically reused
+  (trace, provenance and all), and consumers hold one stable total mod across insertions. This is
+  reuse-by-structure — the part of SAC memoization these workloads need without RSP timestamps.
+  Removal stays non-structural (trade to qty 0). `(psac:run-dynamic-book-demo)` walks through it.
 - **Parallel propagation** (`propagate-parallel!`): level-synchronous waves on an lparallel kernel.
   By the height invariant, same-level dirty nodes never read each other's outputs, so each
   (stratum, height) level runs as one parallel wave with a barrier between levels. Graph bookkeeping
