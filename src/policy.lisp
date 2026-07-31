@@ -96,7 +96,8 @@ under another R-node and gets killed/rebuilt by a parent re-run, the pending mas
 
 (defun reset-all! ()
   "Full reset for tests and demos: graph, policy, scenarios, principals, counters.
-Makes principal ids (and therefore blame-split remainders) deterministic per session."
+Makes principal ids (and therefore blame-split remainders) deterministic per session.
+For isolation without touching global state, see WITH-FRESH-STATE."
   (reset-graph!)
   (reset-policy!)
   (clrhash *scenarios*)
@@ -107,3 +108,28 @@ Makes principal ids (and therefore blame-split remainders) deterministic per ses
         *mod-counter* 0
         *rnode-counter* 0)
   (values))
+
+(defmacro with-fresh-state (&body body)
+  "Run BODY with every piece of mutable psac state rebound to fresh objects: graph queue,
+bills, logs, scenarios, policy and principal tables, counters. The dynamic-extent
+counterpart of RESET-ALL!: globals are untouched, bindings nest, and each thread that
+wraps its work in WITH-FRESH-STATE gets a fully isolated world -- independent universes
+may then compute concurrently. Parallel waves and PAR convey the coordinator's bindings
+to lparallel workers explicitly; other threads spawned inside BODY do not inherit them."
+  `(let* ((*dirty-buckets* (make-hash-table :test #'equal))
+          (*current-rnode* nil)
+          (*last-bill* nil)
+          (*last-update-log* '())
+          (*current-scenario* nil)
+          (*scenarios* (make-hash-table :test #'equal))
+          (*member-mods* (make-hash-table :test #'equal))
+          (*grant-mods* (make-hash-table :test #'equal))
+          (*allowed-mods* (make-hash-table :test #'equal))
+          (*principal-ids* (make-hash-table :test #'equal))
+          (*principal-names* (make-hash-table :test #'eql))
+          (*principal-counter* -1)
+          (*mod-counter* 0)
+          (*rnode-counter* 0)
+          ;; last: interned into the fresh tables bound above
+          (*current-principal* (intern-principal "system")))
+     ,@body))

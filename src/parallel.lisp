@@ -65,8 +65,15 @@ therefore log) order is arbitrary; bills are deterministic regardless."
                               collect (cons node (rnode-blame node))
                               do (setf (rnode-dirty-p node) nil)
                                  (kill-subtree node))))
+          ;; convey the coordinator's dynamic state to workers: lparallel futures/tasks
+          ;; see global bindings otherwise, which would break WITH-FRESH-STATE
           (let* ((effective-bill (if *billing-suspended* nil bill))
-                 (task (lambda (pair) (run-level-task (car pair) (cdr pair) effective-bill)))
+                 (buckets *dirty-buckets*)
+                 (enforce *enforce-labels*)
+                 (task (lambda (pair)
+                         (let ((*dirty-buckets* buckets)
+                               (*enforce-labels* enforce))
+                           (run-level-task (car pair) (cdr pair) effective-bill))))
                  (logs (if (null (cdr prepared))
                            (list (funcall task (first prepared)))
                            (lparallel:pmap 'list task prepared))))
@@ -85,7 +92,7 @@ therefore log) order is arbitrary; bills are deterministic regardless."
 ;;;; ADAPTIVE-READs created in the branches are recorded with :par context -- the trace
 ;;;; carries S/P structure (RSP-lite; full timestamped RSP trees remain future work).
 ;;;;
-;;;; Dynamic state (bill, blame, labels, scenario, lock flag) is conveyed to workers explicitly:
+;;;; Dynamic state (bill, blame, labels, scenario, dirty buckets, lock flag) is conveyed to workers explicitly:
 ;;;; lparallel futures do not transfer special bindings. Granularity control is
 ;;;; defpun-style: beyond ceil(log2 workers)+2 nested PARs the branches just run
 ;;;; sequentially in the caller (override the cutoff with *PAR-MAX-DEPTH*).
@@ -110,6 +117,7 @@ therefore log) order is arbitrary; bills are deterministic regardless."
             (enforce *enforce-labels*)
             (principal *current-principal*)
             (scenario *current-scenario*)
+            (buckets *dirty-buckets*)
             (depth (1+ *par-depth*)))
         (let ((fut (lparallel:future
                      (let ((*current-rnode* rnode)
@@ -119,6 +127,7 @@ therefore log) order is arbitrary; bills are deterministic regardless."
                            (*enforce-labels* enforce)
                            (*current-principal* principal)
                            (*current-scenario* scenario)
+                           (*dirty-buckets* buckets)
                            (*propagation-log* '())
                            (*parallel-propagation* t)
                            (*par-context* t)

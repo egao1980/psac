@@ -78,6 +78,12 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   `model/PsacModel/Scenario.lean`: `scenario_observe` (as-if = from-scratch on the tagged world),
   `scenario_roundtrip` (rollback restores the base world exactly), `scenario_private` (a scenario
   writing outside an observer's support is invisible to that observer).
+- **State**: all mutable runtime state (dirty queue, bills, logs, scenarios, policy and principal
+  tables, counters) lives in special variables. `with-fresh-state` rebinds the lot to fresh objects
+  with dynamic extent — globals untouched, bindings nest, and one `with-fresh-state` per thread gives
+  fully isolated worlds that compute concurrently (`reset-all!` is the destructive counterpart; the
+  test suite runs every test inside `with-fresh-state`). Parallel waves and `par` convey the
+  coordinator's bindings to lparallel workers explicitly, since futures do not inherit specials.
 - **Access**: read/write capabilities, fixnum-bitset label lattice (`*enforce-labels*`), policy-as-SAC:
   per-fact mods `member?(p,g)` / `grants(g,c)` at stratum 0 propagate before data, so revocation is just
   change propagation. `release-gated` demonstrates a differencing-resistant aggregate gate.

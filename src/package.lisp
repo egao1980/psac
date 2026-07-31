@@ -26,7 +26,7 @@
    #:scenario-tag #:scenario-owner #:scenario-live-p
    ;; policy
    #:member-mod #:grant-mod #:allowed-mod #:admit! #:revoke! #:grant-class! #:guarded-read #:release-gated
-   #:reset-policy! #:reset-all!
+   #:reset-policy! #:reset-all! #:with-fresh-state
    ;; examples
    #:adaptive-map #:adaptive-filter #:adaptive-reduce #:adaptive-max #:adaptive-avg
    ;; portfolio scenario
