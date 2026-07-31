@@ -15,6 +15,7 @@
                (:file "provenance")
                (:file "policy")
                (:file "examples")
+               (:file "portfolio")
                (:file "harness"))
   :in-order-to ((asdf:test-op (asdf:test-op "psac/tests"))))
 

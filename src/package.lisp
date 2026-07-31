@@ -25,5 +25,10 @@
    #:reset-policy!
    ;; examples
    #:adaptive-map #:adaptive-filter #:adaptive-reduce #:adaptive-max #:adaptive-avg
+   ;; portfolio scenario
+   #:make-universe #:tick! #:book-trade! #:request #:ledger-alist #:risk-report
+   #:run-portfolio-demo #:*request-fee* #:find-asset
+   #:universe-firm-pnl #:universe-desk-pnl #:universe-exposure #:universe-worst
+   #:asset-ticker #:asset-price-mod #:asset-qty-mod #:asset-basis-mod #:asset-pnl-mod
    ;; harness
    #:run-scenario))

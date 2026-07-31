@@ -253,6 +253,47 @@
         ;; billing: the single node re-ran once per update
         (ok (= (bill-total (last-bill)) 1))))))
 
+(deftest portfolio-scenario
+  (testing "portfolio risk: access control, request billing, provenance report"
+    (reset-graph!)
+    (reset-policy!)
+    (let ((u (make-universe '(("AAPL" 19000 100 18000 2)
+                              ("MSFT" 41000 50 40000 2)
+                              ("GOOG" 17500 -30 18000 2))
+                            '("AAPL"))))
+      (ok (= (mod-value (universe-firm-pnl u)) (+ 100000 50000 15000)))
+      ;; feed tick: recompute cost blamed on the feed
+      (tick! u "AAPL" 19500)
+      (ok (= (mod-value (universe-firm-pnl u)) (+ 150000 50000 15000)))
+      (ok (equal (bill-alist)
+                 (list (cons (intern-principal "feed") 16)))) ; pnl 1 + firm 5 + desk 3 + expo 4 + worst 3
+      ;; alice sees everything; charge = fee + source costs + calc costs over the slice
+      (multiple-value-bind (v c) (request u "alice" :firm-pnl)
+        (ok (= v 215000))
+        (ok (= c (+ 1 (+ 2 2 2) (+ 1 1 1 5)))))
+      ;; bob gets his desk aggregate, and a smaller slice = smaller charge
+      (multiple-value-bind (v c) (request u "bob" :desk-b-pnl)
+        (ok (= v 150000))
+        (ok (= c (+ 1 2 1 3))))
+      ;; bob is denied raw prices, per-position detail, and firm-wide numbers
+      (ok (eq (request u "bob" :firm-pnl) :denied))
+      (ok (eq (request u "bob" (cons :price "AAPL")) :denied))
+      (ok (eq (request u "bob" (cons :pnl "MSFT")) :denied))
+      (ok (> (cdr (assoc "alice" (ledger-alist u) :test #'equal))
+             (cdr (assoc "bob" (ledger-alist u) :test #'equal))))
+      ;; alice's provenance report (before any further propagation touches the log)
+      (let ((report (risk-report u :shock-ticker "AAPL" :shock-bps -1000)))
+        (ok (search "firm P&L: 215000" report))
+        (ok (search "determined by: basis[GOOG], qty[GOOG], price[GOOG]" report))
+        (ok (search "blame: feed" report))
+        ;; AAPL -10%: pnl = 100*(17550-18000) = -45000; firm = -45000+50000+15000
+        (ok (search "firm P&L would be 20000" report))
+        ;; probe left the world untouched
+        (ok (= (mod-value (universe-firm-pnl u)) 215000)))
+      ;; revocation is change propagation: bob loses even his aggregate
+      (revoke! "bob" :desk-b)
+      (ok (eq (request u "bob" :desk-b-pnl) :denied)))))
+
 (deftest harness-scenario
   (testing "JSON scenario runs and snapshots match hand computation"
     (let ((json (run-scenario (asdf:system-relative-pathname :psac "scenarios/basic.json"))))

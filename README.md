@@ -47,6 +47,13 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   (tunable via `*par-max-depth*`). `(psac:bench-par-within :n 64 :workers 8)` shows ~6x inside one
   node, where level parallelism can't help. Timestamped RSP trees with SP-order maintenance remain
   future work.
+- **Parallelism is proof-backed** (`model/PsacModel/ParLevel.lean`): the scheduler only reorders
+  independent nodes, so correctness reduces to commutation — `step_comm` (independent steps commute),
+  `eval_perm` (pairwise-independent lists are permutation-invariant, i.e. wave workers may commit in
+  any order), `eval_blocks_comm` (fork-join branch blocks swap), and `propagate_waves_correct`
+  (propagating in any level-synchronous wave order from a consistent run equals from-scratch).
+  `Indep` is the semantic counterpart of the runtime's height invariant; that the implementation
+  establishes it is covered by the test suite and differential harness, not the proofs.
 - **Cost**: attributed per re-executed R-node to the *blame set* (principals whose writes caused the re-run).
   Batched deltas split cost by integer division, remainder to the lowest principal id — exact conservation,
   proved in `model/PsacModel/Cost.lean`.
@@ -57,5 +64,24 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   per-fact mods `member?(p,g)` / `grants(g,c)` at stratum 0 propagate before data, so revocation is just
   change propagation. `release-gated` demonstrates a differencing-resistant aggregate gate.
 - **Lean model** (`model/`): straight-line SSA node programs over `Store := String → Int`.
-  Theorems: `propagate_correct` (incremental = from-scratch), `support_sound`, cost conservation.
-  The `oracle` executable evaluates scenarios from scratch and cross-checks its own `propagate`.
+  Theorems: `propagate_correct` (incremental = from-scratch), `support_sound`, cost conservation,
+  and the `ParLevel` commutation results above. The `oracle` executable evaluates scenarios from
+  scratch and cross-checks its own `propagate`.
+
+## Worked scenario: portfolio risk (`src/portfolio.lisp`)
+
+`(psac:run-portfolio-demo)` — a book of positions priced off ticker mods owned by a market-data
+feed, with adaptive risk views: per-asset P&L, firm P&L, desk P&L, gross exposure, and worst
+position (selective provenance: the argmin position explains the number).
+
+- **Access** (policy as SAC): Alice (group `:risk`) sees everything; Bob (group `:desk-b`) sees
+  only his desk's aggregates — raw prices, per-position detail and firm-wide views answer
+  `:denied`, and `revoke!` cuts him off by ordinary change propagation.
+- **Billing**, two channels: propagation bills blame whoever wrote (feed ticks, Alice's trades)
+  for the nodes their change re-ran at each node's predefined `:cost`; `request` charges the
+  caller a flat API fee plus source-data costs and calc costs summed over the provenance slice
+  of the requested view — Bob's smaller slice makes his requests cheaper by construction.
+- **Report**: `risk-report` explains Alice's numbers — per-position P&L attribution, why the
+  worst position is what it is (selective provenance), the causal chain of the last update
+  (which nodes re-ran, on whose blame, at what cost), and a counterfactual price-shock probe
+  that leaves the world untouched.
