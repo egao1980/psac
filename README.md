@@ -38,7 +38,15 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   (stratum, height) level runs as one parallel wave with a barrier between levels. Graph bookkeeping
   is serialized by a lock taken only during waves; user thunks run unlocked. Bills stay deterministic
   (per-node blame; wave execution order only affects log order). `(psac:bench-parallel :n 64 :workers 8)`
-  shows ~6x on heavy map nodes. Full RSP-tree change propagation with work stealing remains future work.
+  shows ~6x on heavy map nodes.
+- **Fork-join inside computations** (`par`, `par-map`, RSP-lite): a thunk can split into two branches
+  that run as lparallel futures (the kernel does work stealing internally), joining before the thunk
+  continues — so a single R-node's (re-)execution is internally parallel and the trace records S/P
+  structure (`:par` context on children). Dynamic state (bill, blame, labels) is conveyed to workers
+  explicitly; granularity is defpun-style — spawning stops beyond `ceil(log2 workers)+2` nested `par`s
+  (tunable via `*par-max-depth*`). `(psac:bench-par-within :n 64 :workers 8)` shows ~6x inside one
+  node, where level parallelism can't help. Timestamped RSP trees with SP-order maintenance remain
+  future work.
 - **Cost**: attributed per re-executed R-node to the *blame set* (principals whose writes caused the re-run).
   Batched deltas split cost by integer division, remainder to the lowest principal id — exact conservation,
   proved in `model/PsacModel/Cost.lean`.

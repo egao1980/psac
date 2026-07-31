@@ -19,6 +19,8 @@
 ;; True inside parallel propagation waves; makes graph bookkeeping take *GRAPH-LOCK*.
 (defvar *parallel-propagation* nil)
 (defvar *graph-lock* (bt:make-lock "psac-graph"))
+;; True inside PAR branches: children registered there are P-context (RSP-lite marker).
+(defvar *par-context* nil)
 
 (defmacro with-graph-lock (&body body)
   "Serialize shared-graph mutation during parallel waves; free in the sequential path."
@@ -45,6 +47,8 @@
   (label 0 :type fixnum)
   (cost 1 :type fixnum)
   (blame 0 :type fixnum)
+  ;; RSP-lite: :seq for ordinary children, :par for nodes registered inside PAR branches
+  (context :seq)
   (dirty-p nil)
   (dead-p nil))
 
@@ -92,6 +96,7 @@ THUNK re-runs whenever any of the mods changes. Returns the node."
          (node (make-rnode
                 :thunk thunk :mods-read mods :cost cost :provenance-fn provenance
                 :parent parent :name name
+                :context (if *par-context* :par :seq)
                 :stratum (reduce #'max mods :key #'modref-stratum
                                  :initial-value (if parent (rnode-stratum parent) 0))
                 :label (reduce #'logior mods :key #'modref-label

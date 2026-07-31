@@ -79,3 +79,75 @@ therefore log) order is arbitrary; bills are deterministic regardless."
       (setf *last-update-log* (nreverse log)
             *last-bill* bill))
     bill))
+
+;;;; Fork-join inside computations (phase 7b, RSP-lite) -------------------------
+;;;;
+;;;; PAR evaluates two branches of a thunk, possibly in parallel via lparallel futures
+;;;; (lparallel's kernel does work stealing internally), joining before the thunk
+;;;; continues. So a single R-node's (re-)execution can be internally parallel, and
+;;;; ADAPTIVE-READs created in the branches are recorded with :par context -- the trace
+;;;; carries S/P structure (RSP-lite; full timestamped RSP trees remain future work).
+;;;;
+;;;; Dynamic state (bill, blame, labels, lock flag) is conveyed to workers explicitly:
+;;;; lparallel futures do not transfer special bindings. Granularity control is
+;;;; defpun-style: beyond ceil(log2 workers)+2 nested PARs the branches just run
+;;;; sequentially in the caller (override the cutoff with *PAR-MAX-DEPTH*).
+
+(defvar *par-depth* 0)
+(defvar *par-max-depth* nil
+  "Deepest PAR nesting that still spawns a future; NIL = ceil(log2 workers)+2, 0 = never spawn.")
+
+(defun par-max-depth ()
+  (or *par-max-depth*
+      (+ 2 (integer-length (1- (lparallel:kernel-worker-count))))))
+
+(defun call-par (left right)
+  "Run thunks LEFT and RIGHT (RIGHT possibly on a worker), return both values."
+  (if (or (null lparallel:*kernel*)
+          (>= *par-depth* (par-max-depth)))
+      (values (funcall left) (funcall right))
+      (let ((rnode *current-rnode*)
+            (bill *propagation-bill*)
+            (blame *propagation-blame*)
+            (suspended *billing-suspended*)
+            (enforce *enforce-labels*)
+            (principal *current-principal*)
+            (depth (1+ *par-depth*)))
+        (let ((fut (lparallel:future
+                     (let ((*current-rnode* rnode)
+                           (*propagation-bill* bill)
+                           (*propagation-blame* blame)
+                           (*billing-suspended* suspended)
+                           (*enforce-labels* enforce)
+                           (*current-principal* principal)
+                           (*propagation-log* '())
+                           (*parallel-propagation* t)
+                           (*par-context* t)
+                           (*par-depth* depth))
+                       (cons (funcall right) *propagation-log*))))
+              (left-value (let ((*parallel-propagation* t)
+                                (*par-context* t)
+                                (*par-depth* depth))
+                            (funcall left))))
+          (destructuring-bind (right-value . right-log) (lparallel:force fut)
+            ;; fold the worker's task-local execution log into ours
+            (setf *propagation-log* (append right-log *propagation-log*))
+            (values left-value right-value))))))
+
+(defmacro par (form-a form-b)
+  "Fork-join: evaluate FORM-A and FORM-B, possibly in parallel; return both values.
+Safe inside ADAPTIVE-READ thunks: nested reads, writes, and billing in either branch
+are lock-protected and joined before PAR returns."
+  `(call-par (lambda () ,form-a) (lambda () ,form-b)))
+
+(defun par-map (fn list)
+  "Map FN over LIST by fork-join divide and conquer (spawning bounded by PAR's depth cutoff)."
+  (labels ((rec (l len)
+             (if (<= len 1)
+                 (mapcar fn l)
+                 (let ((half (floor len 2)))
+                   (multiple-value-bind (a b)
+                       (call-par (lambda () (rec (subseq l 0 half) half))
+                                 (lambda () (rec (subseq l half) (- len half))))
+                     (append a b))))))
+    (rec list (length list))))

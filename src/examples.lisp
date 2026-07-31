@@ -91,3 +91,31 @@ tree. Prints and returns (values seq-ms par-ms speedup)."
         (format t "~&bench-parallel: n=~a rounds=~a  sequential=~,1fms  parallel=~,1fms  speedup=~,2fx~%"
                 n rounds (float seq-ms) (float par-ms) speedup)
         (values seq-ms par-ms speedup)))))
+
+(defun bench-par-within (&key (n 64) (rounds 3) workers)
+  "Fork-join speedup *inside one node*: a single R-node whose thunk PAR-MAPs heavy work
+over N items. Level parallelism can't help here (one dirty node per wave); only PAR can.
+Prints and returns (values seq-ms par-ms speedup)."
+  (ensure-kernel workers)
+  (reset-graph!)
+  (let ((in (make-mod 0 :name "in"))
+        (out (make-mod nil :name "out")))
+    (register-read (list in)
+                   (lambda (v)
+                     (write! out (reduce #'logxor
+                                         (par-map (lambda (i) (heavy-work (+ v i)))
+                                                  (alexandria:iota n)))))
+                   :name "par-within")
+    (flet ((run-rounds (start-at)
+             (let ((start (get-internal-real-time)))
+               (dotimes (r rounds)
+                 (write! in (+ start-at r 1))
+                 (propagate!))
+               (/ (- (get-internal-real-time) start)
+                  (/ internal-time-units-per-second 1000)))))
+      (let* ((seq-ms (let ((*par-max-depth* 0)) (run-rounds 0)))
+             (par-ms (run-rounds 1000))
+             (speedup (if (zerop par-ms) 0.0 (float (/ seq-ms par-ms)))))
+        (format t "~&bench-par-within: n=~a rounds=~a  sequential=~,1fms  par=~,1fms  speedup=~,2fx~%"
+                n rounds (float seq-ms) (float par-ms) speedup)
+        (values seq-ms par-ms speedup)))))

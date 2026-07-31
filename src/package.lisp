@@ -14,6 +14,8 @@
    #:adaptive-read #:register-read #:write! #:propagate! #:reset-graph!
    ;; parallel
    #:propagate-parallel! #:ensure-kernel #:bench-parallel
+   ;; fork-join (RSP-lite)
+   #:par #:par-map #:*par-max-depth* #:bench-par-within
    ;; cost
    #:last-bill #:bill-total #:bill-alist #:last-update-log
    ;; provenance

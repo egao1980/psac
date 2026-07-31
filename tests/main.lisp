@@ -197,6 +197,62 @@
         (propagate-parallel!)
         (ok (eq (mod-value out) :denied))))))
 
+(deftest par-fork-join
+  (testing "PAR branches with nested reads: incremental matches from-scratch, :par context recorded"
+    (reset-graph!)
+    (ensure-kernel)
+    (let* ((trigger (make-mod 0 :name "trigger"))
+           (l (make-mod 2 :name "l"))
+           (r (make-mod 3 :name "r"))
+           (out-l (make-mod nil :name "out-l"))
+           (out-r (make-mod nil :name "out-r"))
+           (out (make-mod nil :name "out"))
+           (parent (register-read (list trigger)
+                                  (lambda (tv)
+                                    (par (adaptive-read ((a l)) (write! out-l (+ tv (* a a))))
+                                         (adaptive-read ((b r)) (write! out-r (+ tv (* b b))))))
+                                  :name "par-parent")))
+      (adaptive-read ((a out-l) (b out-r)) (write! out (+ a b)))
+      (ok (= (mod-value out) 13))
+      (ok (every (lambda (c) (eq (psac::rnode-context c) :par))
+                 (psac::rnode-children parent)))
+      ;; a leaf update re-runs only its branch
+      (write! l 4)
+      (propagate!)
+      (ok (= (mod-value out) 25))
+      ;; parent re-run rebuilds both branches via PAR mid-propagation
+      (write! trigger 10)
+      (propagate!)
+      (ok (= (mod-value out) (+ 10 16 10 9)))
+      ;; same under parallel waves; stale dirty children are dead and skipped
+      (write! trigger 1)
+      (write! r 5)
+      (propagate-parallel!)
+      (ok (= (mod-value out) (+ 1 16 1 25))))))
+
+(deftest par-map-consistency
+  (testing "PAR-MAP inside one node matches its sequential result across updates"
+    (reset-graph!)
+    (ensure-kernel)
+    (let ((in (make-mod 1 :name "pm-in"))
+          (out (make-mod nil :name "pm-out"))
+          (items (loop for i below 33 collect i)))
+      (register-read (list in)
+                     (lambda (v)
+                       (write! out (reduce #'+ (par-map (lambda (i) (* (+ v i) (+ v i))) items))))
+                     :name "pm-node")
+      (flet ((expected (v) (loop for i below 33 sum (* (+ v i) (+ v i)))))
+        (ok (= (mod-value out) (expected 1)))
+        (dolist (v '(5 -3 42))
+          (write! in v)
+          (propagate!)
+          (ok (= (mod-value out) (expected v))))
+        (write! in 7)
+        (propagate-parallel!)
+        (ok (= (mod-value out) (expected 7)))
+        ;; billing: the single node re-ran once per update
+        (ok (= (bill-total (last-bill)) 1))))))
+
 (deftest harness-scenario
   (testing "JSON scenario runs and snapshots match hand computation"
     (let ((json (run-scenario (asdf:system-relative-pathname :psac "scenarios/basic.json"))))
