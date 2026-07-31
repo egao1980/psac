@@ -47,12 +47,22 @@ O(#distinct levels), not O(#dirty nodes)."
         (unless node (return))
         (setf (rnode-dirty-p node) nil)
         (let* ((blame (rnode-blame node))
-               (*propagation-blame* blame))
-          (kill-subtree node)
-          (run-rnode node)
-          (when *propagation-bill*
-            (record-execution node blame))
-          (setf (rnode-blame node) 0))))
+               (*propagation-blame* blame)
+               (completed nil))
+          (unwind-protect
+               (progn
+                 (kill-subtree node)
+                 (run-rnode node)
+                 (when *propagation-bill*
+                   (record-execution node blame))
+                 (setf (rnode-blame node) 0)
+                 (setf completed t))
+            ;; a signaling thunk must not leave the node silently clean: re-enqueue it
+            ;; (blame intact) so the next PROPAGATE! retries instead of no-opping
+            (unless completed
+              (setf (rnode-dirty-p node) t)
+              (push node (gethash (cons (rnode-stratum node) (rnode-height node))
+                                  *dirty-buckets*)))))))
     (unless *billing-suspended*
       (setf *last-update-log* (nreverse *propagation-log*)
             *last-bill* bill))

@@ -2,4 +2,5 @@ ql alexandria
 ql bordeaux-threads
 ql lparallel
 ql rove
-ql jzon
+# pinned: jzon was dropped from the 2026-01-01 Quicklisp dist, which broke clean bootstraps
+ql jzon 2024-10-12

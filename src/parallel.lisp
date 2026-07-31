@@ -14,9 +14,23 @@
 ;;;; mod such a child already read, the child is simply dirtied and re-runs next level,
 ;;;; so the wave stays convergent.
 ;;;;
-;;;; Assumed (as everywhere in psac): single-writer discipline per mod.
+;;;; Single-writer discipline per mod is enforced by WRITE! (single-writer-error).
 
 (defvar *default-workers* 4)
+
+(defparameter *conveyed-state*
+  '(*dirty-buckets* *enforce-labels* *billing-suspended*
+    *current-principal* *current-scenario* *scenarios*
+    *member-mods* *grant-mods* *allowed-mods*
+    *principal-ids* *principal-names*
+    *principal-counter* *mod-counter* *rnode-counter*)
+  "Specials conveyed to lparallel workers (futures do not inherit dynamic bindings).
+Everything WITH-FRESH-STATE rebinds that worker-executed code may read must be here,
+or workers escape the coordinator's fresh world back to the globals. Counters are
+one-element boxes precisely so this conveyance shares the cell.")
+
+(defun conveyed-values ()
+  (mapcar #'symbol-value *conveyed-state*))
 
 (defun ensure-kernel (&optional workers)
   "Create the lparallel kernel on first use. Worker count: WORKERS, else $PSAC_WORKERS, else 4."
@@ -44,10 +58,21 @@
   (let ((*propagation-bill* bill)
         (*propagation-blame* blame)
         (*propagation-log* '())
-        (*parallel-propagation* t))
-    (run-rnode node)
-    (record-execution node blame)
-    (setf (rnode-blame node) 0)
+        (*parallel-propagation* t)
+        (completed nil))
+    (unwind-protect
+         (progn
+           (run-rnode node)
+           (when *propagation-bill*
+             (record-execution node blame))
+           (setf (rnode-blame node) 0)
+           (setf completed t))
+      ;; mirror PROPAGATE!: a signaling thunk re-enqueues its node (blame intact)
+      (unless completed
+        (with-graph-lock
+          (setf (rnode-dirty-p node) t)
+          (push node (gethash (cons (rnode-stratum node) (rnode-height node))
+                              *dirty-buckets*)))))
     *propagation-log*))
 
 (defun propagate-parallel! (&key workers)
@@ -68,11 +93,9 @@ therefore log) order is arbitrary; bills are deterministic regardless."
           ;; convey the coordinator's dynamic state to workers: lparallel futures/tasks
           ;; see global bindings otherwise, which would break WITH-FRESH-STATE
           (let* ((effective-bill (if *billing-suspended* nil bill))
-                 (buckets *dirty-buckets*)
-                 (enforce *enforce-labels*)
+                 (vals (conveyed-values))
                  (task (lambda (pair)
-                         (let ((*dirty-buckets* buckets)
-                               (*enforce-labels* enforce))
+                         (progv *conveyed-state* vals
                            (run-level-task (car pair) (cdr pair) effective-bill))))
                  (logs (if (null (cdr prepared))
                            (list (funcall task (first prepared)))
@@ -113,26 +136,18 @@ therefore log) order is arbitrary; bills are deterministic regardless."
       (let ((rnode *current-rnode*)
             (bill *propagation-bill*)
             (blame *propagation-blame*)
-            (suspended *billing-suspended*)
-            (enforce *enforce-labels*)
-            (principal *current-principal*)
-            (scenario *current-scenario*)
-            (buckets *dirty-buckets*)
+            (vals (conveyed-values))
             (depth (1+ *par-depth*)))
         (let ((fut (lparallel:future
-                     (let ((*current-rnode* rnode)
-                           (*propagation-bill* bill)
-                           (*propagation-blame* blame)
-                           (*billing-suspended* suspended)
-                           (*enforce-labels* enforce)
-                           (*current-principal* principal)
-                           (*current-scenario* scenario)
-                           (*dirty-buckets* buckets)
-                           (*propagation-log* '())
-                           (*parallel-propagation* t)
-                           (*par-context* t)
-                           (*par-depth* depth))
-                       (cons (funcall right) *propagation-log*))))
+                     (progv *conveyed-state* vals
+                       (let ((*current-rnode* rnode)
+                             (*propagation-bill* bill)
+                             (*propagation-blame* blame)
+                             (*propagation-log* '())
+                             (*parallel-propagation* t)
+                             (*par-context* t)
+                             (*par-depth* depth))
+                         (cons (funcall right) *propagation-log*)))))
               (left-value (let ((*parallel-propagation* t)
                                 (*par-context* t)
                                 (*par-depth* depth))

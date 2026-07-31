@@ -435,6 +435,111 @@
       (ok (aref results 0))
       (ok (aref results 1)))))
 
+(deftest-fresh policy-group-sets
+  (testing "allowed-mod caches per (principal, class, group-set), order-insensitively"
+    (admit! "alice" :g1)
+    (grant-class! :g1 :secret)
+    (let ((via-g1 (allowed-mod "alice" :secret :groups '(:g1)))
+          (via-g2 (allowed-mod "alice" :secret :groups '(:g2))))
+      ;; different group sets are different decisions, not one shared cache entry
+      (ok (not (eq via-g1 via-g2)))
+      (ok (eq (mod-value via-g1) t))
+      (ok (null (mod-value via-g2)))
+      ;; same set in a different order hits the same cached mod
+      (ok (eq (allowed-mod "alice" :secret :groups '(:g2 :g1))
+              (allowed-mod "alice" :secret :groups '(:g1 :g2)))))))
+
+(deftest parallel-fresh-state-conveyance
+  (testing "worker thunks run in the coordinator's fresh world, not the globals"
+    (let ((global-ids psac::*principal-ids*))
+      (with-fresh-state
+        (ensure-kernel)
+        (let ((x1 (make-mod 0)) (x2 (make-mod 0))
+              (o1 (make-mod nil)) (o2 (make-mod nil)))
+          (adaptive-read ((v x1))
+            (when (plusp v) (intern-principal "w-one"))
+            (write! o1 v))
+          (adaptive-read ((v x2))
+            (when (plusp v) (intern-principal "w-two"))
+            (write! o2 v))
+          (write! x1 1)
+          (write! x2 1)
+          (propagate-parallel!)
+          ;; both principals landed in the fresh tables with distinct ids after system=0
+          (let ((one (gethash "w-one" psac::*principal-ids*))
+                (two (gethash "w-two" psac::*principal-ids*)))
+            (ok (member one '(1 2)))
+            (ok (member two '(1 2)))
+            (ok (/= one two))
+            ;; the shared counter box saw both increments: no id reuse
+            (ok (= (intern-principal "w-next") 3)))))
+      ;; nothing leaked into the global world
+      (ok (null (gethash "w-one" global-ids)))
+      (ok (null (gethash "w-two" global-ids))))))
+
+(deftest-fresh propagation-error-recovery
+  (testing "a signaling thunk leaves its node dirty; propagation retries, never no-ops"
+    (let ((x (make-mod 0 :name "ex"))
+          (y (make-mod nil :name "ey")))
+      (adaptive-read ((v x))
+        (when (= v 1) (error "boom"))
+        (write! y v))
+      (write! x 1)
+      (ok (signals (propagate!) 'error))
+      ;; still dirty: a second propagate! retries (and signals again) instead of no-opping
+      (ok (signals (propagate!) 'error))
+      (write! x 2)
+      (propagate!)
+      (ok (= (mod-value y) 2))
+      ;; same under parallel waves
+      (write! x 1)
+      (ensure-kernel)
+      (ok (signals (propagate-parallel!) 'error))
+      (write! x 3)
+      (propagate-parallel!)
+      (ok (= (mod-value y) 3)))))
+
+(deftest-fresh single-writer-enforcement
+  (testing "a second live node writing the same mod signals SINGLE-WRITER-ERROR"
+    (let ((a (make-mod 1))
+          (b (make-mod 2))
+          (out (make-mod nil)))
+      (adaptive-read ((v a)) (write! out v))
+      (ok (signals (adaptive-read ((v b)) (write! out v)) 'single-writer-error))
+      ;; external writes (no node) and the original writer remain allowed
+      (write! a 5)
+      (propagate!)
+      (ok (= (mod-value out) 5)))))
+
+(deftest-fresh seq-par-equivalence
+  (testing "identical graphs and writes: sequential and parallel agree on values and bills"
+    (flet ((run (parallel)
+             (with-fresh-state
+               (when parallel (ensure-kernel))
+               (let* ((inputs (loop for i below 16 collect (make-mod i)))
+                      (squares (adaptive-map (lambda (v) (* v v)) inputs))
+                      (total (adaptive-reduce #'+ squares))
+                      (mx (adaptive-max squares)))
+                 (with-principal ("alice")
+                   (write! (nth 3 inputs) 100)
+                   (write! (nth 7 inputs) -5))
+                 (with-principal ("bob")
+                   (write! (nth 7 inputs) 42)
+                   (write! (nth 11 inputs) 9))
+                 (if parallel (propagate-parallel!) (propagate!))
+                 (list (mod-value total) (mod-value mx) (bill-alist))))))
+      (ok (equal (run nil) (run t))))))
+
+(deftest-fresh input-validation
+  (testing "empty combinators and unknown tickers signal clear errors"
+    (ok (signals (adaptive-reduce #'+ '()) 'error))
+    (ok (signals (adaptive-max '()) 'error))
+    (ok (signals (adaptive-avg '()) 'error))
+    (ok (signals (adaptive-filter #'evenp '()) 'error))
+    (let ((u (make-universe '(("AAPL" 19000 100 18000 2)) '("AAPL"))))
+      (ok (signals (tick! u "NOPE" 1) 'error))
+      (ok (signals (book-trade! u "NOPE" 1 1) 'error)))))
+
 (deftest-fresh harness-scenario
   (testing "JSON scenario runs and snapshots match hand computation"
     (let ((json (run-scenario (asdf:system-relative-pathname :psac "scenarios/basic.json"))))

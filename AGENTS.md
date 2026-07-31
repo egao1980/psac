@@ -25,9 +25,11 @@ formal model in **Lean 4** (`model/`), everything reproducible in the **devconta
 - **No new global mutable state.** All mutable runtime state lives in special variables
   rebound by `with-fresh-state` (and destructively cleared by `reset-all!`). If you add
   a stateful defvar, add it to both. Tests use `deftest-fresh`, never raw globals.
-- **Concurrency discipline.** Single writer per mod; shared-graph mutation goes through
-  `with-graph-lock`; any special variable read inside worker-executed code must be
-  conveyed explicitly to lparallel tasks (futures do not inherit dynamic bindings).
+- **Concurrency discipline.** Single writer per mod (enforced by `write!`); shared-graph
+  mutation goes through `with-graph-lock`; any special variable read inside
+  worker-executed code must be listed in `*conveyed-state*` (`src/parallel.lisp`) —
+  lparallel futures do not inherit dynamic bindings. Counters are one-element boxes so
+  conveyance shares the cell.
 
 ## Git
 

@@ -40,10 +40,13 @@
 
 (defun allowed-mod (principal class &key groups)
   "Derived stratum-0 mod: PRINCIPAL may access CLASS iff some g in GROUPS has
-member?(p,g) and grants(g,class). Built once per (principal, class)."
-  (let ((key (cons (intern-principal principal) class)))
+member?(p,g) and grants(g,class). Built once per (principal, class, group-set) --
+the group set is part of the cache key, so different group sets never share a
+cached decision."
+  (let* ((id (intern-principal principal))
+         (key (list id class (sort (copy-list groups) #'string< :key #'string))))
     (or (gethash key *allowed-mods*)
-        (let* ((out (make-mod nil :name (format nil "allowed?(~a,~a)" (principal-name (car key)) class)
+        (let* ((out (make-mod nil :name (format nil "allowed?(~a,~a)" (principal-name id) class)
                                   :stratum 0))
                (member-mods (mapcar (lambda (g) (member-mod principal g)) groups))
                (grant-mods (mapcar (lambda (g) (grant-mod g class)) groups))
@@ -52,8 +55,12 @@ member?(p,g) and grants(g,class). Built once per (principal, class)."
                          (lambda (&rest vals)
                            (let ((members (subseq vals 0 n))
                                  (grants (subseq vals n)))
-                             (write! out (and (some (lambda (m g) (and m g)) members grants) t))))
-                         :name (format nil "allowed-node(~a,~a)" (principal-name (car key)) class))
+                             ;; multi-sequence SOME is an SBCL extension; LOOP is ANSI CL
+                             (write! out (and (loop for m in members
+                                                    for g in grants
+                                                    thereis (and m g))
+                                              t))))
+                         :name (format nil "allowed-node(~a,~a)" (principal-name id) class))
           (setf (gethash key *allowed-mods*) out)))))
 
 (defmacro guarded-read ((var data-mod allowed-mod) &body body)
@@ -103,10 +110,10 @@ For isolation without touching global state, see WITH-FRESH-STATE."
   (clrhash *scenarios*)
   (clrhash *principal-ids*)
   (clrhash *principal-names*)
-  (setf *principal-counter* -1
+  (setf *principal-counter* (list -1)
         *current-principal* (intern-principal "system")
-        *mod-counter* 0
-        *rnode-counter* 0)
+        *mod-counter* (list 0)
+        *rnode-counter* (list 0))
   (values))
 
 (defmacro with-fresh-state (&body body)
@@ -115,7 +122,9 @@ bills, logs, scenarios, policy and principal tables, counters. The dynamic-exten
 counterpart of RESET-ALL!: globals are untouched, bindings nest, and each thread that
 wraps its work in WITH-FRESH-STATE gets a fully isolated world -- independent universes
 may then compute concurrently. Parallel waves and PAR convey the coordinator's bindings
-to lparallel workers explicitly; other threads spawned inside BODY do not inherit them."
+to lparallel workers via *CONVEYED-STATE*; other threads spawned inside BODY do not
+inherit them. Any new stateful defvar readable from worker code must be added here,
+to RESET-ALL!, and to *CONVEYED-STATE*."
   `(let* ((*dirty-buckets* (make-hash-table :test #'equal))
           (*current-rnode* nil)
           (*last-bill* nil)
@@ -127,9 +136,9 @@ to lparallel workers explicitly; other threads spawned inside BODY do not inheri
           (*allowed-mods* (make-hash-table :test #'equal))
           (*principal-ids* (make-hash-table :test #'equal))
           (*principal-names* (make-hash-table :test #'eql))
-          (*principal-counter* -1)
-          (*mod-counter* 0)
-          (*rnode-counter* 0)
+          (*principal-counter* (list -1))
+          (*mod-counter* (list 0))
+          (*rnode-counter* (list 0))
           ;; last: interned into the fresh tables bound above
           (*current-principal* (intern-principal "system")))
      ,@body))

@@ -7,7 +7,7 @@
 ;;;; subtree. Edges are bidirectional: mod -> readers (propagation) and node -> mods-read
 ;;;; (provenance slicing).
 
-(defvar *rnode-counter* 0)
+(defvar *rnode-counter* (list 0))   ; boxed; see *principal-counter*
 (defvar *current-rnode* nil)
 ;; Dirty live R-nodes bucketed by (stratum . height); the minimal bucket drains first.
 ;; Nodes marked dead or clean while enqueued are skipped lazily on removal.
@@ -20,21 +20,12 @@
 (defvar *propagation-blame* 0)
 (defvar *propagation-log* '())
 (defvar *billing-suspended* nil)
-;; True inside parallel propagation waves; makes graph bookkeeping take *GRAPH-LOCK*.
-(defvar *parallel-propagation* nil)
-(defvar *graph-lock* (bt:make-lock "psac-graph"))
+;; *PARALLEL-PROPAGATION*, *GRAPH-LOCK*, WITH-GRAPH-LOCK live in primitives.lisp.
 ;; True inside PAR branches: children registered there are P-context (RSP-lite marker).
 (defvar *par-context* nil)
 
-(defmacro with-graph-lock (&body body)
-  "Serialize shared-graph mutation during parallel waves; free in the sequential path."
-  `(flet ((body () ,@body))
-     (if *parallel-propagation*
-         (bt:with-lock-held (*graph-lock*) (body))
-         (body))))
-
 (defstruct (rnode (:print-object print-rnode))
-  (id (incf *rnode-counter*) :type fixnum)
+  (id (incf (car *rnode-counter*)) :type fixnum)
   (name nil)
   (thunk nil :type (or null function))
   ;; static read set (bindings of the adaptive-read); nested reads live in children
@@ -192,6 +183,11 @@ an external update blamed on *CURRENT-PRINCIPAL*. Returns T if the value changed
       ;; writer backpointer is shared graph state (read by height computation and
       ;; provenance walks), so it is mutated under the same lock as value/blame/dirty
       (when node
+        ;; enforce the single-writer discipline the whole runtime assumes: a second
+        ;; live node writing the same mod corrupts provenance, bills, and wave order
+        (let ((w (modref-writer mod)))
+          (when (and w (not (eq w node)) (not (rnode-dead-p w)))
+            (error 'single-writer-error :mod mod :writer w :node node)))
         (setf (modref-writer mod) node))
       (let ((old (modref-value mod)))
         (cond ((funcall (modref-test mod) old value)

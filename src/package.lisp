@@ -9,7 +9,7 @@
    ;; caps
    #:grant-read #:grant-write #:read-cap #:read-cap-p #:write-cap #:write-cap-p
    ;; conditions
-   #:label-flow-error #:*enforce-labels* #:height-invariant-error
+   #:label-flow-error #:*enforce-labels* #:height-invariant-error #:single-writer-error
    ;; core
    #:adaptive-read #:register-read #:write! #:propagate! #:reset-graph!
    ;; parallel

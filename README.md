@@ -95,8 +95,7 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 ## Worked scenario: portfolio risk (`src/portfolio.lisp`)
 
 A presentation-style walkthrough with diagrams, code fragments, and worked billing
-numbers lives in [`docs/portfolio-demo.md`](docs/portfolio-demo.md)
-([PDF](docs/portfolio-demo.pdf)).
+numbers lives in [`docs/portfolio-demo.md`](docs/portfolio-demo.md).
 
 `(psac:run-portfolio-demo)` — a book of positions priced off ticker mods owned by a market-data
 feed, with adaptive risk views: per-asset P&L, firm P&L, desk P&L, gross exposure, and worst
