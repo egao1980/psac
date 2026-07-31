@@ -4,8 +4,11 @@ Self-adjusting computation (SAC) in Common Lisp with cost attribution, provenanc
 and access rights expressed as SAC — paired with a Lean 4 model of the trace semantics.
 
 Concept follows Anderson, Blelloch, Baweja & Acar, *Efficient Parallel Self-Adjusting Computation*
-(SPAA '21, [doi:10.1145/3409964.3461799](https://doi.org/10.1145/3409964.3461799)). This repo implements
-the sequential core; the parallel runtime (RSP trees, work stealing) is a later phase.
+(SPAA '21, [doi:10.1145/3409964.3461799](https://doi.org/10.1145/3409964.3461799)). The runtime covers
+the sequential core plus a parallel one: level-synchronous change propagation (`propagate-parallel!`)
+and fork-join inside computations (`par`, `par-map`) on an lparallel work-stealing kernel — both
+~6.3x on 8 workers and proof-backed (`model/PsacModel/ParLevel.lean`). Full timestamped RSP trees
+remain future work.
 
 ## Layout
 
@@ -32,7 +35,7 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 ## Design notes
 
 - **Propagation**: dirty R-nodes processed in (stratum, height) order; equality cutoff on `write!`.
-  Height-based glitch-free ordering (Jane Street Incremental style); RSP timestamps arrive with the parallel phase.
+  Height-based glitch-free ordering (Jane Street Incremental style); RSP timestamps remain future work.
 - **Parallel propagation** (`propagate-parallel!`): level-synchronous waves on an lparallel kernel.
   By the height invariant, same-level dirty nodes never read each other's outputs, so each
   (stratum, height) level runs as one parallel wave with a barrier between levels. Graph bookkeeping

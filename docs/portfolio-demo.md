@@ -68,8 +68,8 @@ grants(desk-b,desk-b) ┼─▶ allowed-node(bob,desk-b) ──▶ allowed?(bob,
 ```
 
 Underneath, the same runtime provides level-synchronous parallel propagation
-(`propagate-parallel!`) and fork-join inside computations (`par`, `par-map`), both
-proof-backed (section 9).
+(`propagate-parallel!`) and fork-join inside computations (`par`, `par-map`) — see
+section 10, proof-backed per section 11.
 
 ## 4. Building the book (code)
 
@@ -247,7 +247,45 @@ P&L 162000) this answers **−38000**, bills 17 cost units to alice *on the scen
 and the update log are byte-identical to before. Scenarios nest LIFO and roll back on
 non-local exit too.
 
-## 10. Formal guarantees (Lean 4, no sorries)
+## 10. Parallel execution: the same graph, more workers
+
+Everything above runs unchanged in parallel; results and bills are identical by
+construction, because the scheduler only reorders *independent* work.
+
+**Across nodes** — `propagate-parallel!` drains dirty nodes in (stratum, height) waves
+on an lparallel kernel (which does work stealing internally). By the height invariant,
+same-level nodes never read each other's outputs, so each wave runs concurrently with a
+barrier between levels. A tick storm across the whole book — every `pnl-node[T]` dirty
+at once — is exactly this shape:
+
+```lisp
+(dolist (tick storm) (tick! u (car tick) (cdr tick) :propagate nil))
+(propagate-parallel! :workers 8)   ; same values, same bill as propagate!
+```
+
+**Inside a node** — `par` and `par-map` fork-join within a single thunk, for the case
+level parallelism cannot touch: one dirty node with a heavy body (think a Monte-Carlo
+VaR node mapping over paths):
+
+```lisp
+(register-read (list params)
+               (lambda (p)
+                 (write! var (percentile 99 (par-map (lambda (path) (revalue p path))
+                                                     paths))))
+               :name "mc-var-node" :cost 50)
+```
+
+Dynamic state (bill, blame, labels) is conveyed to workers explicitly; spawning stops
+beyond `ceil(log2 workers)+2` nested `par`s (tunable via `*par-max-depth*`), falling
+back to sequential in the caller. Nested `adaptive-read`s created in branches are
+tagged `:par` in the trace (RSP-lite).
+
+Measured on 8 workers (`bench-parallel` / `bench-par-within`, 64 heavy nodes / items):
+**~6.3x** both across nodes and within one node. Policy stratification, billing
+determinism, and provenance all survive parallel execution — the wave order only
+permutes log entries, never values or bills.
+
+## 11. Formal guarantees (Lean 4, no sorries)
 
 | Theorem | File | What it guarantees for the demo |
 |---------|------|--------------------------------|
@@ -263,7 +301,7 @@ The Lean model covers the sequential trace semantics and the order-irrelevance
 arguments; that the runtime establishes their premises (heights, single-writer
 discipline) is covered by the test suite and a CL-vs-Lean differential harness.
 
-## 11. Run it yourself
+## 12. Run it yourself
 
 ```bash
 devcontainer up --workspace-folder .
