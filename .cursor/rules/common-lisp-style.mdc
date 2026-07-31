@@ -1,0 +1,23 @@
+---
+description: Common Lisp style for psac — naming, macros, types, tests, .asd handling
+globs: ["**/*.lisp", "**/*.asd", "**/*.ros"]
+---
+
+# Common Lisp style
+
+- 2-space indent; `lower-case-lisp-case` functions; `-p` predicates; `+constants+`;
+  `*special-variables*`; `%private-constructors`.
+- Docstrings on every exported function/macro; file-level `;;;;` banner comments explain
+  the mechanism and its Lean counterpart where one exists.
+- **Macros** only where they remove real duplication or encode the API (`adaptive-read`,
+  `with-scenario`, `with-fresh-state` are the pattern); otherwise functions.
+- **Types** where they clarify intent: struct slot `:type`s (note blame/label masks are
+  `fixnum` — principal ids are capped accordingly), `check-type`/`assert` at API borders.
+- **Conditions:** define specific condition types (`label-flow-error`,
+  `height-invariant-error` style) with `:report`; use `cerror` when continuing is sane.
+- **Tests:** Rove; new tests use `deftest-fresh` (isolated world per test); assert exact
+  values (bills, charges, slices), not smoke checks.
+- `.asd` files are Lisp source; keep `:components` order load-safe (`:serial t`) —
+  specials must be defined in an earlier file than their first reference.
+- Equality: pick the mod's `:test` deliberately (`eql` default; numbers compared across
+  types need `=`; lists need `equal`).

@@ -1,0 +1,24 @@
+---
+description: psac project conventions — stack, invariants, testing, state discipline
+alwaysApply: true
+---
+
+# psac project
+
+- **Layout:** `src/` CL runtime · `tests/` Rove suite · `model/` Lean 4 proofs + oracle ·
+  `scenarios/` JSON for the CL-vs-Lean differential harness · `scripts/` entry points ·
+  `docs/portfolio-demo.md` walkthrough (worked numbers must match `(psac:run-portfolio-demo)`).
+- **Read `AGENTS.md`** for project invariants (claim backing, CL↔Lean sync, state discipline).
+- **Testing:** `scripts/test.sh` in the devcontainer; on this Windows host use WSL + Roswell
+  instead — see `.cursor/skills/run-psac-tests/SKILL.md`. The in-repo `.qlot/` contains
+  symlinks into the devcontainer's cache and does **not** resolve on the host.
+- **Non-interactive Lisp:** always `ros run -- --non-interactive` (or `sbcl --disable-debugger`)
+  in scripts/agent calls; otherwise unhandled conditions hang waiting for debugger stdin.
+- **State:** new mutable state must be a special variable wired into `with-fresh-state` and
+  `reset-all!`; tests use `deftest-fresh`. Convey specials explicitly to lparallel workers.
+- **Semantics changes** (cutoff, cost split, propagation/wave order, scenarios) require the
+  matching `model/PsacModel/*.lean` update and a `scripts/diff-test.sh` run —
+  see `.cursor/skills/lean-model/SKILL.md`.
+- **Long-running commands:** redirect noisy build/test output to a file and read the tail on
+  failure (`cmd > /tmp/out.log 2>&1 || tail -50 /tmp/out.log`).
+- **Git:** feature branches, small milestone commits; undo with git, not from memory.

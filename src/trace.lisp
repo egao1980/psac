@@ -7,30 +7,25 @@
 ;;;; subtree. Edges are bidirectional: mod -> readers (propagation) and node -> mods-read
 ;;;; (provenance slicing).
 
-(defvar *rnode-counter* 0)
+(defvar *rnode-counter* (list 0))   ; boxed; see *principal-counter*
 (defvar *current-rnode* nil)
-(defvar *dirty-queue* '())
+;; Dirty live R-nodes bucketed by (stratum . height); the minimal bucket drains first.
+;; Nodes marked dead or clean while enqueued are skipped lazily on removal.
+(defvar *dirty-buckets* (make-hash-table :test #'equal))
 (defvar *last-update-log* '())
+;; Innermost active scenario (see scenario.lisp); declared here so PAR can convey it.
+(defvar *current-scenario* nil)
 ;; Bound by PROPAGATE! so that nodes (re)executed during propagation are charged and logged.
 (defvar *propagation-bill* nil)
 (defvar *propagation-blame* 0)
 (defvar *propagation-log* '())
 (defvar *billing-suspended* nil)
-;; True inside parallel propagation waves; makes graph bookkeeping take *GRAPH-LOCK*.
-(defvar *parallel-propagation* nil)
-(defvar *graph-lock* (bt:make-lock "psac-graph"))
+;; *PARALLEL-PROPAGATION*, *GRAPH-LOCK*, WITH-GRAPH-LOCK live in primitives.lisp.
 ;; True inside PAR branches: children registered there are P-context (RSP-lite marker).
 (defvar *par-context* nil)
 
-(defmacro with-graph-lock (&body body)
-  "Serialize shared-graph mutation during parallel waves; free in the sequential path."
-  `(flet ((body () ,@body))
-     (if *parallel-propagation*
-         (bt:with-lock-held (*graph-lock*) (body))
-         (body))))
-
 (defstruct (rnode (:print-object print-rnode))
-  (id (incf *rnode-counter*) :type fixnum)
+  (id (incf (car *rnode-counter*)) :type fixnum)
   (name nil)
   (thunk nil :type (or null function))
   ;; static read set (bindings of the adaptive-read); nested reads live in children
@@ -71,8 +66,8 @@
 
 (defun reset-graph! ()
   "Clear global propagation state (queue, logs, bills). Mods and nodes are owned by callers."
-  (setf *dirty-queue* '()
-        *last-update-log* '()
+  (clrhash *dirty-buckets*)
+  (setf *last-update-log* '()
         *last-bill* nil
         *current-rnode* nil)
   (values))
@@ -97,8 +92,11 @@ THUNK re-runs whenever any of the mods changes. Returns the node."
                 :thunk thunk :mods-read mods :cost cost :provenance-fn provenance
                 :parent parent :name name
                 :context (if *par-context* :par :seq)
-                :stratum (reduce #'max mods :key #'modref-stratum
-                                 :initial-value (if parent (rnode-stratum parent) 0))
+                ;; empty read set with no parent defaults to the data stratum, not policy
+                :stratum (if (or mods parent)
+                             (reduce #'max mods :key #'modref-stratum
+                                     :initial-value (if parent (rnode-stratum parent) 0))
+                             1)
                 :label (reduce #'logior mods :key #'modref-label
                                :initial-value (if parent (rnode-label parent) 0))
                 :height (compute-node-height mods parent))))
@@ -127,6 +125,12 @@ BODY runs with vars bound to current values and re-runs on changes; writes insid
 (defun run-rnode (node)
   (let* ((*current-rnode* node)
          (vals (mapcar #'modref-value (rnode-mods-read node))))
+    ;; drop writer backpointers from the previous run: a conditional write may not recur,
+    ;; and a stale writer corrupts provenance slices (and request billing built on them)
+    (with-graph-lock
+      (dolist (m (rnode-writes node))
+        (when (eq (modref-writer m) node)
+          (setf (modref-writer m) nil))))
     (setf (rnode-writes node) '()
           (rnode-children node) '())
     (let ((result (apply (rnode-thunk node) vals)))
@@ -174,9 +178,17 @@ an external update blamed on *CURRENT-PRINCIPAL*. Returns T if the value changed
                (not (zerop (logandc2 (rnode-label node) (modref-label mod)))))
       (error 'label-flow-error :node-label (rnode-label node) :mod mod))
     (when node
-      (pushnew mod (rnode-writes node))
-      (setf (modref-writer mod) node))
+      (pushnew mod (rnode-writes node)))
     (with-graph-lock
+      ;; writer backpointer is shared graph state (read by height computation and
+      ;; provenance walks), so it is mutated under the same lock as value/blame/dirty
+      (when node
+        ;; enforce the single-writer discipline the whole runtime assumes: a second
+        ;; live node writing the same mod corrupts provenance, bills, and wave order
+        (let ((w (modref-writer mod)))
+          (when (and w (not (eq w node)) (not (rnode-dead-p w)))
+            (error 'single-writer-error :mod mod :writer w :node node)))
+        (setf (modref-writer mod) node))
       (let ((old (modref-value mod)))
         (cond ((funcall (modref-test mod) old value)
                nil)
@@ -189,9 +201,17 @@ an external update blamed on *CURRENT-PRINCIPAL*. Returns T if the value changed
                t))))))
 
 (defun dirty-readers! (mod)
-  (dolist (r (modref-readers mod))
-    (unless (rnode-dead-p r)
-      (setf (rnode-blame r) (logior (rnode-blame r) (modref-blame mod)))
-      (unless (rnode-dirty-p r)
-        (setf (rnode-dirty-p r) t)
-        (push r *dirty-queue*)))))
+  (let ((w (modref-writer mod)))
+    (dolist (r (modref-readers mod))
+      (unless (rnode-dead-p r)
+        ;; detect stale heights (the documented v1 limitation) instead of silently
+        ;; glitching: a same-stratum reader must sit strictly above its writer
+        (when (and w (not (eq r w))
+                   (= (rnode-stratum r) (rnode-stratum w))
+                   (<= (rnode-height r) (rnode-height w)))
+          (cerror "Propagate anyway (may glitch and mis-bill)."
+                  'height-invariant-error :writer w :reader r))
+        (setf (rnode-blame r) (logior (rnode-blame r) (modref-blame mod)))
+        (unless (rnode-dirty-p r)
+          (setf (rnode-dirty-p r) t)
+          (push r (gethash (cons (rnode-stratum r) (rnode-height r)) *dirty-buckets*)))))))

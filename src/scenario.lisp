@@ -14,7 +14,7 @@
 ;;;; Lean counterparts: scenario_observe / scenario_roundtrip / scenario_private
 ;;;; in model/PsacModel/Scenario.lean.
 
-(defvar *current-scenario* nil)
+;; *CURRENT-SCENARIO* is defined in trace.lisp so PAR can convey it to workers.
 (defvar *scenarios* (make-hash-table :test #'equal)
   "Completed scenarios by tag; a reused tag keeps the most recent run.")
 

@@ -222,8 +222,11 @@ firm P&L: 1065000  gross exposure: 28525000  worst position P&L: 15000  desk-B P
 Reading it section by section:
 
 - **Worst position, explained** — the selective-provenance declaration slices the
-  explanation to the argmin: GOOG's three inputs, not all fifteen. `support_sound` in
-  Lean guarantees the slice is honest: inputs outside the support cannot influence the value.
+  explanation to the argmin positions (all of them, under ties): GOOG's three inputs, not
+  all fifteen. A selective slice *explains the current value*; it is not an influence
+  bound — any position dropping below the current worst would change the number. The
+  Lean-proved guarantee (`support_sound`) applies to the full, non-selective support, as
+  printed for firm P&L below: inputs outside *that* set cannot change the value.
 - **Causal chain** — the last propagation verbatim: what re-ran, on whose blame, at what
   cost. Note it records the cutoff story from section 5 (only two nodes re-ran).
 - **Counterfactual** — `probe` runs one incremental propagation forward and one back;
@@ -290,7 +293,7 @@ permutes log entries, never values or bills.
 | Theorem | File | What it guarantees for the demo |
 |---------|------|--------------------------------|
 | `propagate_correct` | `Basic.lean` | incremental propagation ≡ from-scratch: every number after a tick equals a full re-price |
-| `support_sound` | `Support.lean` | provenance slices are honest: inputs outside the support cannot change a view |
+| `support_sound` | `Support.lean` | full (non-selective) supports are honest: inputs outside the support cannot change a view |
 | `charge_conserves`, `bill_conserves` | `Cost.lean` | bills are exactly conserved — split work sums back to total work |
 | `step_comm`, `eval_perm`, `eval_blocks_comm`, `propagate_waves_correct` | `ParLevel.lean` | parallel propagation and fork-join may reorder independent work without changing any result |
 | `scenario_observe` | `Scenario.lean` | a what-if reads exactly the from-scratch value of the hypothetical world |

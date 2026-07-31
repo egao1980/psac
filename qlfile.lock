@@ -20,5 +20,5 @@
   :version "ql-2026-01-01"))
 ("jzon" .
  (:class qlot/source/ql:source-ql
-  :initargs (:%version :latest)
+  :initargs (:%version "2024-10-12")
   :version "ql-2024-10-12"))

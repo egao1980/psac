@@ -44,6 +44,11 @@
 (defun find-asset (universe ticker)
   (find ticker (universe-assets universe) :key #'asset-ticker :test #'equal))
 
+(defun require-asset (universe ticker)
+  (or (find-asset universe ticker)
+      (error "unknown ticker ~s in universe (have: ~{~a~^, ~})"
+             ticker (mapcar #'asset-ticker (universe-assets universe)))))
+
 (defun make-universe (specs desk-tickers)
   "SPECS: list of (ticker price qty basis source-cost); prices in integer cents.
 DESK-TICKERS: the subset Bob's desk holds. Builds all adaptive views and the access
@@ -94,8 +99,11 @@ policy. Assumes a fresh graph (caller does RESET-GRAPH! / RESET-POLICY!)."
                          (write! worst m)
                          m))
                      :name "worst-position-node" :cost 3
+                     ;; all argmin witnesses: under ties, every tied position explains the value
                      :provenance (lambda (result vals mods-read)
-                                   (list (nth (position result vals) mods-read))))
+                                   (loop for v in vals
+                                         for m in mods-read
+                                         when (= v result) collect m)))
       (setf (universe-firm-pnl u) firm
             (universe-desk-pnl u) desk
             (universe-exposure u) expo
@@ -124,13 +132,13 @@ policy. Assumes a fresh graph (caller does RESET-GRAPH! / RESET-POLICY!)."
 (defun tick! (universe ticker new-price &key (propagate t))
   "A market-data update from the feed. Recompute costs are blamed on \"feed\"."
   (with-principal ("feed")
-    (write! (asset-price-mod (find-asset universe ticker)) new-price))
+    (write! (asset-price-mod (require-asset universe ticker)) new-price))
   (when propagate (propagate!))
   (values))
 
 (defun book-trade! (universe ticker new-qty new-basis &key (principal "alice") (propagate t))
   "A position amendment; recompute costs are blamed on PRINCIPAL."
-  (let ((a (find-asset universe ticker)))
+  (let ((a (require-asset universe ticker)))
     (with-principal (principal)
       (write! (asset-qty-mod a) new-qty)
       (write! (asset-basis-mod a) new-basis)))
@@ -219,7 +227,7 @@ update, and a counterfactual probe (SHOCK-TICKER moved by SHOCK-BPS basis points
               (getf entry :node) (getf entry :blame)
               (getf entry :cost) (getf entry :wrote)))
     (when shock-ticker
-      (let* ((a (find-asset universe shock-ticker))
+      (let* ((a (require-asset universe shock-ticker))
              (price (mod-value (asset-price-mod a)))
              (shocked (round (* price (+ 10000 shock-bps)) 10000))
              (would-be (probe (asset-price-mod a) shocked (universe-firm-pnl universe))))
@@ -234,8 +242,7 @@ update, and a counterfactual probe (SHOCK-TICKER moved by SHOCK-BPS basis points
   "End-to-end scenario: build the book, tick the market, trade, serve billed requests
 for Alice (full access) and Bob (desk aggregates only), print Alice's report and the
 request ledger."
-  (reset-graph!)
-  (reset-policy!)
+  (reset-all!)
   (let ((u (make-universe
             ;; ticker  price  qty  basis  source-cost (per-update API cost of that feed)
             '(("AAPL" 19000 100 18000 2)

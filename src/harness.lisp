@@ -58,8 +58,11 @@
     (let ((steps (list (snapshot mods names))))
       (loop for batch across (gethash "updates" doc)
             do (loop for u across batch
+                     for mod-name = (gethash "mod" u)
+                     for mod = (or (gethash mod-name mods)
+                                   (error "unknown mod ~s in update" mod-name))
                      do (with-principal ((gethash "principal" u "system"))
-                          (write! (gethash (gethash "mod" u) mods) (gethash "value" u))))
+                          (write! mod (gethash "value" u))))
                (propagate!)
                (push (snapshot mods names) steps))
       (let ((json (format nil "~a~%" (render-steps (nreverse steps)))))

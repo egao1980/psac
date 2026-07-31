@@ -10,17 +10,32 @@
 ;;;; that invert writer/reader heights mid-flight are not re-leveled. RSP-tree timestamps
 ;;;; replace this in the parallel phase.
 
-(defun pop-min-dirty ()
+(defun dirty-key< (a b)
+  "Order (stratum . height) bucket keys."
+  (or (< (car a) (car b))
+      (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+
+(defun min-dirty-key ()
+  "Minimal (stratum . height) key with a non-empty bucket, dropping drained buckets.
+O(#distinct levels), not O(#dirty nodes)."
   (let ((best nil))
-    (dolist (n *dirty-queue*)
-      (when (or (null best)
-                (< (rnode-stratum n) (rnode-stratum best))
-                (and (= (rnode-stratum n) (rnode-stratum best))
-                     (< (rnode-height n) (rnode-height best))))
-        (setf best n)))
-    (when best
-      (setf *dirty-queue* (delete best *dirty-queue* :count 1)))
+    (maphash (lambda (key bucket)
+               (if (null bucket)
+                   (remhash key *dirty-buckets*)
+                   (when (or (null best) (dirty-key< key best))
+                     (setf best key))))
+             *dirty-buckets*)
     best))
+
+(defun pop-min-dirty ()
+  "Remove and return a live dirty node at the minimal (stratum, height), or NIL."
+  (loop for key = (min-dirty-key)
+        while key
+        do (loop for node = (pop (gethash key *dirty-buckets*))
+                 while node
+                 when (and (not (rnode-dead-p node)) (rnode-dirty-p node))
+                   do (return-from pop-min-dirty node))
+           (remhash key *dirty-buckets*)))
 
 (defun propagate! ()
   "Re-run dirty computations until quiescent. Returns the bill: hash principal-id -> cost."
@@ -28,19 +43,26 @@
          (*propagation-bill* (if *billing-suspended* nil bill))
          (*propagation-log* '()))
     (loop
-      (setf *dirty-queue*
-            (delete-if (lambda (n) (or (rnode-dead-p n) (not (rnode-dirty-p n))))
-                       *dirty-queue*))
       (let ((node (pop-min-dirty)))
         (unless node (return))
         (setf (rnode-dirty-p node) nil)
         (let* ((blame (rnode-blame node))
-               (*propagation-blame* blame))
-          (kill-subtree node)
-          (run-rnode node)
-          (when *propagation-bill*
-            (record-execution node blame))
-          (setf (rnode-blame node) 0))))
+               (*propagation-blame* blame)
+               (completed nil))
+          (unwind-protect
+               (progn
+                 (kill-subtree node)
+                 (run-rnode node)
+                 (when *propagation-bill*
+                   (record-execution node blame))
+                 (setf (rnode-blame node) 0)
+                 (setf completed t))
+            ;; a signaling thunk must not leave the node silently clean: re-enqueue it
+            ;; (blame intact) so the next PROPAGATE! retries instead of no-opping
+            (unless completed
+              (setf (rnode-dirty-p node) t)
+              (push node (gethash (cons (rnode-stratum node) (rnode-height node))
+                                  *dirty-buckets*)))))))
     (unless *billing-suspended*
       (setf *last-update-log* (nreverse *propagation-log*)
             *last-bill* bill))

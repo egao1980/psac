@@ -21,7 +21,7 @@
          (let* ((mid (floor (length mods) 2))
                 (left (adaptive-reduce fn (subseq mods 0 mid) :name name))
                 (right (adaptive-reduce fn (subseq mods mid) :name name))
-                (out (make-mod nil :name (format nil "~a-out~a" name (incf *mod-counter*)))))
+                (out (make-mod nil :name (format nil "~a-out~a" name (incf (car *mod-counter*))))))
            (register-read (list left right)
                           (lambda (a b) (write! out (funcall fn a b)))
                           :name name)
@@ -29,12 +29,16 @@
 
 (defun adaptive-filter (pred mods &key (name "filter"))
   "Output mod holding the list of current values satisfying PRED."
+  (when (null mods) (error "adaptive-filter: empty input"))
   (let ((wrapped (adaptive-map (lambda (v) (if (funcall pred v) (list v) '())) mods
                                :name (format nil "~a-wrap" name))))
     (adaptive-reduce #'append wrapped :name name)))
 
 (defun adaptive-max (mods &key (name "max"))
-  "Maximum over MODS, with selective provenance: only the argmax determines the result."
+  "Maximum over MODS, with selective provenance: the argmax positions (all of them, under
+ties) explain the result. Selective slices explain the current value; only the full
+\(non-selective) support bounds influence."
+  (when (null mods) (error "adaptive-max: empty input"))
   (let ((out (make-mod nil :name (format nil "~a-out" name))))
     (register-read mods
                    (lambda (&rest vals)
@@ -43,11 +47,14 @@
                        m))
                    :name "max-node"
                    :provenance (lambda (result vals mods-read)
-                                 (list (nth (position result vals) mods-read))))
+                                 (loop for v in vals
+                                       for m in mods-read
+                                       when (= v result) collect m)))
     out))
 
 (defun adaptive-avg (mods &key (name "avg"))
   "Exact (rational) average over MODS."
+  (when (null mods) (error "adaptive-avg: empty input"))
   (let ((out (make-mod nil :name (format nil "~a-out" name))))
     (register-read mods
                    (lambda (&rest vals)
