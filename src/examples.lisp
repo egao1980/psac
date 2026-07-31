@@ -54,3 +54,40 @@
                      (write! out (/ (reduce #'+ vals) (length vals))))
                    :name "avg-node")
     out))
+
+;;;; Parallel benchmark -------------------------------------------------------
+
+(defun heavy-work (v)
+  "Deliberately expensive pure function (multiplicative LCG churn) for benchmarks."
+  (let ((acc (abs v)))
+    (dotimes (i 300000 acc)
+      (setf acc (ldb (byte 61 0) (+ (* acc 6364136223846793005) 1442695040888963407 i))))))
+
+(defun bench-parallel (&key (n 32) (rounds 3) workers)
+  "Compare sequential vs parallel propagation over N heavy map nodes feeding a reduce
+tree. Prints and returns (values seq-ms par-ms speedup)."
+  (flet ((build ()
+           (reset-graph!)
+           (loop for i below n collect (make-mod i)))
+         (elapsed-ms (start) (/ (- (get-internal-real-time) start)
+                                (/ internal-time-units-per-second 1000))))
+    (let (seq-ms par-ms)
+      (let ((inputs (build)))
+        (adaptive-reduce #'logxor (adaptive-map #'heavy-work inputs :name "heavy") :name "xor")
+        (let ((start (get-internal-real-time)))
+          (dotimes (r rounds)
+            (dolist (m inputs) (write! m (+ (mod-value m) r 1)))
+            (propagate!))
+          (setf seq-ms (elapsed-ms start))))
+      (let ((inputs (build)))
+        (adaptive-reduce #'logxor (adaptive-map #'heavy-work inputs :name "heavy") :name "xor")
+        (ensure-kernel workers)
+        (let ((start (get-internal-real-time)))
+          (dotimes (r rounds)
+            (dolist (m inputs) (write! m (+ (mod-value m) r 1)))
+            (propagate-parallel!))
+          (setf par-ms (elapsed-ms start))))
+      (let ((speedup (if (zerop par-ms) 0.0 (float (/ seq-ms par-ms)))))
+        (format t "~&bench-parallel: n=~a rounds=~a  sequential=~,1fms  parallel=~,1fms  speedup=~,2fx~%"
+                n rounds (float seq-ms) (float par-ms) speedup)
+        (values seq-ms par-ms speedup)))))

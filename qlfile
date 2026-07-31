@@ -1,3 +1,5 @@
 ql alexandria
+ql bordeaux-threads
+ql lparallel
 ql rove
 ql jzon

@@ -33,6 +33,12 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
 
 - **Propagation**: dirty R-nodes processed in (stratum, height) order; equality cutoff on `write!`.
   Height-based glitch-free ordering (Jane Street Incremental style); RSP timestamps arrive with the parallel phase.
+- **Parallel propagation** (`propagate-parallel!`): level-synchronous waves on an lparallel kernel.
+  By the height invariant, same-level dirty nodes never read each other's outputs, so each
+  (stratum, height) level runs as one parallel wave with a barrier between levels. Graph bookkeeping
+  is serialized by a lock taken only during waves; user thunks run unlocked. Bills stay deterministic
+  (per-node blame; wave execution order only affects log order). `(psac:bench-parallel :n 64 :workers 8)`
+  shows ~6x on heavy map nodes. Full RSP-tree change propagation with work stealing remains future work.
 - **Cost**: attributed per re-executed R-node to the *blame set* (principals whose writes caused the re-run).
   Batched deltas split cost by integer division, remainder to the lowest principal id — exact conservation,
   proved in `model/PsacModel/Cost.lean`.

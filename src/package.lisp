@@ -12,6 +12,8 @@
    #:label-flow-error #:*enforce-labels*
    ;; core
    #:adaptive-read #:register-read #:write! #:propagate! #:reset-graph!
+   ;; parallel
+   #:propagate-parallel! #:ensure-kernel #:bench-parallel
    ;; cost
    #:last-bill #:bill-total #:bill-alist #:last-update-log
    ;; provenance

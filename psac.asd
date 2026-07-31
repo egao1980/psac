@@ -3,7 +3,7 @@
   :author "egao1980"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("alexandria" "com.inuoe.jzon")
+  :depends-on ("alexandria" "com.inuoe.jzon" "bordeaux-threads" "lparallel")
   :serial t
   :pathname "src/"
   :components ((:file "package")
@@ -11,6 +11,7 @@
                (:file "cost")
                (:file "trace")
                (:file "propagate")
+               (:file "parallel")
                (:file "provenance")
                (:file "policy")
                (:file "examples")

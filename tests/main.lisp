@@ -145,6 +145,58 @@
       (propagate!)
       (ok (= (mod-value released) 72)))))
 
+(deftest parallel-propagation
+  (testing "parallel waves match from-scratch; bills conserved"
+    (reset-graph!)
+    (let* ((n 64)
+           (inputs (loop for i below n collect (make-mod i)))
+           (squares (adaptive-map (lambda (v) (* v v)) inputs :name "sq"))
+           (total (adaptive-reduce #'+ squares))
+           (mx (adaptive-max squares)))
+      (dotimes (round 10)
+        (with-principal ("alice")
+          (dotimes (k 8) (write! (nth (random n) inputs) (- (random 100) 50))))
+        (with-principal ("bob")
+          (dotimes (k 8) (write! (nth (random n) inputs) (- (random 100) 50))))
+        (let ((bill (propagate-parallel!)))
+          (ok (= (bill-total bill) (length (last-update-log)))))
+        (let ((sq (mapcar (lambda (m) (* (mod-value m) (mod-value m))) inputs)))
+          (ok (= (mod-value total) (reduce #'+ sq)))
+          (ok (= (mod-value mx) (reduce #'max sq))))))))
+
+(deftest parallel-nested
+  (testing "nested reads rebuild correctly under parallel propagation"
+    (reset-graph!)
+    (let ((x (make-mod 2))
+          (y (make-mod 3))
+          (out (make-mod nil)))
+      (adaptive-read ((v x))
+        (adaptive-read ((w y))
+          (write! out (* v w))))
+      (ok (= (mod-value out) 6))
+      (write! x 5)
+      (propagate-parallel!)
+      (ok (= (mod-value out) 15))
+      (write! y 10)
+      (propagate-parallel!)
+      (ok (= (mod-value out) 50)))))
+
+(deftest parallel-stratified
+  (testing "policy stratum quiesces before data even in parallel waves"
+    (reset-graph!)
+    (reset-policy!)
+    (let ((salary (make-mod 100 :name "salary2"))
+          (out (make-mod nil)))
+      (admit! "carol" :hr)
+      (grant-class! :hr :payroll)
+      (let ((allowed (allowed-mod "carol" :payroll :groups '(:hr))))
+        (guarded-read (v salary allowed)
+          (write! out v))
+        (ok (= (mod-value out) 100))
+        (write! (member-mod "carol" :hr) nil)
+        (propagate-parallel!)
+        (ok (eq (mod-value out) :denied))))))
+
 (deftest harness-scenario
   (testing "JSON scenario runs and snapshots match hand computation"
     (let ((json (run-scenario (asdf:system-relative-pathname :psac "scenarios/basic.json"))))

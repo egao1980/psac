@@ -16,6 +16,16 @@
 (defvar *propagation-blame* 0)
 (defvar *propagation-log* '())
 (defvar *billing-suspended* nil)
+;; True inside parallel propagation waves; makes graph bookkeeping take *GRAPH-LOCK*.
+(defvar *parallel-propagation* nil)
+(defvar *graph-lock* (bt:make-lock "psac-graph"))
+
+(defmacro with-graph-lock (&body body)
+  "Serialize shared-graph mutation during parallel waves; free in the sequential path."
+  `(flet ((body () ,@body))
+     (if *parallel-propagation*
+         (bt:with-lock-held (*graph-lock*) (body))
+         (body))))
 
 (defstruct (rnode (:print-object print-rnode))
   (id (incf *rnode-counter*) :type fixnum)
@@ -87,10 +97,11 @@ THUNK re-runs whenever any of the mods changes. Returns the node."
                 :label (reduce #'logior mods :key #'modref-label
                                :initial-value (if parent (rnode-label parent) 0))
                 :height (compute-node-height mods parent))))
-    (dolist (m mods)
-      (push node (modref-readers m)))
-    (when parent
-      (push node (rnode-children parent)))
+    (with-graph-lock
+      (dolist (m mods)
+        (push node (modref-readers m)))
+      (when parent
+        (push node (rnode-children parent))))
     (run-rnode node)
     ;; nodes born during propagation are part of the update's cost
     (when *propagation-bill*
@@ -121,7 +132,9 @@ BODY runs with vars bound to current values and re-runs on changes; writes insid
       result)))
 
 (defun record-execution (node blame)
-  (charge! *propagation-bill* blame (rnode-cost node))
+  (with-graph-lock
+    (charge! *propagation-bill* blame (rnode-cost node)))
+  ;; *PROPAGATION-LOG* is coordinator- or task-local; no lock needed.
   (push (make-update-record :node node :blame blame :cost (rnode-cost node)
                             :writes (copy-list (rnode-writes node)))
         *propagation-log*))
@@ -158,16 +171,17 @@ an external update blamed on *CURRENT-PRINCIPAL*. Returns T if the value changed
     (when node
       (pushnew mod (rnode-writes node))
       (setf (modref-writer mod) node))
-    (let ((old (modref-value mod)))
-      (cond ((funcall (modref-test mod) old value)
-             nil)
-            (t
-             (setf (modref-value mod) value
-                   (modref-blame mod) (if node
-                                          (logior (rnode-blame node) *propagation-blame*)
-                                          (ash 1 *current-principal*)))
-             (dirty-readers! mod)
-             t)))))
+    (with-graph-lock
+      (let ((old (modref-value mod)))
+        (cond ((funcall (modref-test mod) old value)
+               nil)
+              (t
+               (setf (modref-value mod) value
+                     (modref-blame mod) (if node
+                                            (logior (rnode-blame node) *propagation-blame*)
+                                            (ash 1 *current-principal*)))
+               (dirty-readers! mod)
+               t))))))
 
 (defun dirty-readers! (mod)
   (dolist (r (modref-readers mod))
