@@ -62,12 +62,15 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   establishes it is covered by the test suite and differential harness, not the proofs.
 - **Cost**: attributed per re-executed R-node to the *blame set* (principals whose writes caused the re-run).
   Batched deltas split cost by integer division, remainder to the lowest principal id — exact conservation,
-  proved in `model/PsacModel/Cost.lean`.
+  proved in `model/PsacModel/Cost.lean` (`charge_conserves` / `bill_conserves`; blame lists mirror the
+  bitmask's ascending walk, so remainder-to-first *is* remainder-to-lowest — `blame_head_lowest`).
 - **Provenance**: `support` (backward slice, control + data dependence), `explain-update` (last propagation's
   causal chain), `probe` (counterfactuals via propagate-and-rollback). Selective-provenance combinators
   (`:provenance` on `adaptive-read`) sharpen `max`-like ops to their argmax witnesses (all of them, under
-  ties). Note the scope of the guarantee: `support_sound` (Lean) covers the full, non-selective support —
-  inputs outside it cannot change the value. Selective slices explain the current value only; they do not
+  ties). Note the scope of the guarantee: `support_sound` (Lean) covers the full, non-selective *data* slice
+  on the straight-line model — inputs outside it cannot change the value; the control-dependence part of
+  the runtime's `support` (ancestor read sets of nested reads) is covered by the test suite, not the proof.
+  Selective slices explain the current value only; they do not
   bound influence (for a max, any input rising above the current value would change it).
 - **Scenarios** (tagged / private / as-if updates): `with-scenario` + `scenario-write!` +
   `scenario-propagate!` run a named batch of hypothetical writes against the live graph and roll it

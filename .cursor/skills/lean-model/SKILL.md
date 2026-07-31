@@ -19,13 +19,17 @@ keep docs honest about this split.
 | Runtime mechanism (CL) | Theorem | File |
 |---|---|---|
 | `propagate!` + equality cutoff | `propagate_correct` | `Basic.lean` |
-| `support` (full, non-selective slice) | `support_sound` | `Support.lean` |
-| `charge!` split (remainder → lowest id) | `charge_conserves`, `bill_conserves` | `Cost.lean` |
-| `propagate-parallel!` waves, `par` | `step_comm`, `eval_perm`, `eval_blocks_comm`, `propagate_waves_correct` | `ParLevel.lean` |
+| `support` (full slice, data-dependence part) | `support_sound` | `Support.lean` |
+| `charge!` split (remainder → lowest id) | `charge_conserves`, `bill_conserves`, `blame_head_lowest` | `Cost.lean` |
+| `propagate-parallel!` waves, `par` | `step_comm`, `eval_perm`, `eval_blocks_comm`, `waves_WF`, `propagate_waves_correct` | `ParLevel.lean` |
 | `with-scenario` / `what-if` | `scenario_observe`, `scenario_roundtrip`, `scenario_private` | `Scenario.lean` |
 
 **Selective** provenance (`:provenance` fns) is *not* covered by `support_sound` — it
-explains the current value only; never claim it bounds influence.
+explains the current value only; never claim it bounds influence. Likewise the
+*control-dependence* part of `psac:support` (ancestor read sets of nested reads) is
+runtime-only: the Lean slice is data dependence on straight-line programs.
+Blame lists in `Cost.lean` are strictly ascending (the CL bitmask walked low→high);
+CL's empty blame → `:system` case is outside the split model.
 
 ## Sync rules
 

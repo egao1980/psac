@@ -12,8 +12,10 @@ commit, so correctness reduces to commutation:
   so any order a wave's workers finish in yields the same store;
 * `eval_blocks_comm` — two blocks touching disjoint locations run in either order
   (a `par` of independent branches);
+* `waves_WF` — well-formedness of the canonical order carries over to any wave order;
 * `propagate_waves_correct` — propagating in any level-synchronous wave order from a
-  consistent old run computes the from-scratch result on the canonical program.
+  consistent old run computes the from-scratch result on the canonical program,
+  assuming well-formedness only of the canonical order.
 
 `Indep` is the semantic counterpart of the runtime's height invariant: dirty nodes at
 the same (stratum, height) never read or write each other's locations.
@@ -27,6 +29,45 @@ def Indep (m n : Node) : Prop :=
 
 theorem Indep.symm {m n : Node} (h : Indep m n) : Indep n m :=
   ⟨h.2.2.1, h.2.2.2.1, h.1, h.2.1, Ne.symm h.2.2.2.2⟩
+
+/-- The ordered half of `WF`: a later node `n` touches neither the inputs nor the
+output of an earlier node `m`. -/
+abbrev Guards (m n : Node) : Prop :=
+  n.out ≠ m.in1 ∧ n.out ≠ m.in2 ∧ n.out ≠ m.out
+
+/-- Independence guards in both directions, so `Indep` nodes may run in either order
+without breaking well-formedness. -/
+theorem Indep.guards {m n : Node} (h : Indep m n) : Guards m n ∧ Guards n m :=
+  ⟨⟨h.2.2.1, h.2.2.2.1, Ne.symm h.2.2.2.2⟩, ⟨h.1, h.2.1, h.2.2.2.2⟩⟩
+
+/-- `WF` decomposed: per-node self-conditions plus pairwise guarding. -/
+theorem wf_iff_pairwise :
+    ∀ {p : List Node},
+      WF p ↔ (∀ n ∈ p, n.out ≠ n.in1 ∧ n.out ≠ n.in2) ∧ p.Pairwise Guards := by
+  intro p
+  induction p with
+  | nil =>
+    constructor
+    · intro _; exact ⟨fun n hn => (nomatch hn), List.Pairwise.nil⟩
+    · intro _; exact WF.nil
+  | cons n p ih =>
+    constructor
+    · intro h
+      cases h with
+      | cons hn1 hn2 hlater hp =>
+        obtain ⟨hself, hpw⟩ := ih.mp hp
+        refine ⟨?_, List.Pairwise.cons hlater hpw⟩
+        intro m hm
+        rcases List.mem_cons.mp hm with heq | hmem
+        · subst heq; exact ⟨hn1, hn2⟩
+        · exact hself m hmem
+    · intro h
+      obtain ⟨hself, hpw⟩ := h
+      cases hpw with
+      | cons hn hp =>
+        have hs := hself n (List.mem_cons_self n p)
+        exact WF.cons hs.1 hs.2 hn
+          (ih.mpr ⟨fun m hm => hself m (List.mem_cons_of_mem n hm), hp⟩)
 
 theorem Store.set_comm (σ : Store) {x y : String} (hxy : x ≠ y) (v w : Int) :
     (σ.set x v).set y w = (σ.set y w).set x v := by
@@ -141,6 +182,42 @@ inductive Waves : List (List Node) → List (List Node) → Prop
   | cons {l w : List Node} {ls ws : List (List Node)} :
       l.Perm w → Waves ls ws → Waves (l :: ls) (w :: ws)
 
+/-- A wave schedule permutes the canonical program. -/
+theorem waves_perm {ls ws : List (List Node)} (h : Waves ls ws) :
+    ls.flatten.Perm ws.flatten := by
+  induction h with
+  | nil => exact List.Perm.refl _
+  | cons hperm _ ih =>
+    rw [List.flatten_cons, List.flatten_cons]
+    exact hperm.append ih
+
+theorem waves_pairwise_guards {ls ws : List (List Node)} (h : Waves ls ws) :
+    (∀ l ∈ ls, l.Pairwise Indep) → ls.flatten.Pairwise Guards →
+    ws.flatten.Pairwise Guards := by
+  induction h with
+  | nil => exact fun _ h => h
+  | @cons l w ls ws hperm hws ih =>
+    intro hind hpw
+    rw [List.flatten_cons, List.pairwise_append] at hpw
+    obtain ⟨_, hrest, hcross⟩ := hpw
+    rw [List.flatten_cons, List.pairwise_append]
+    refine ⟨?_, ih (fun l' hl' => hind l' (List.mem_cons_of_mem l hl')) hrest, ?_⟩
+    · -- within a wave, Indep guards in both directions, whatever the commit order
+      exact (perm_pairwise (fun h => Indep.symm h) hperm
+        (hind l (List.mem_cons_self l ls))).imp fun hab => (Indep.guards hab).1
+    · intro a ha b hb
+      exact hcross a (hperm.mem_iff.mpr ha) b ((waves_perm hws).mem_iff.mpr hb)
+
+/-- Well-formedness of the canonical order carries over to any wave order: within a
+wave `Indep` supplies the guards both ways, across waves the canonical constraints
+transfer through the permutations. -/
+theorem waves_WF {ls ws : List (List Node)} (h : Waves ls ws)
+    (hind : ∀ l ∈ ls, l.Pairwise Indep) (hwf : WF ls.flatten) : WF ws.flatten := by
+  obtain ⟨hself, hpw⟩ := wf_iff_pairwise.mp hwf
+  exact wf_iff_pairwise.mpr
+    ⟨fun n hn => hself n ((waves_perm h).mem_iff.mpr hn),
+     waves_pairwise_guards h hind hpw⟩
+
 /-- Wave execution computes the same store as the canonical sequential order. -/
 theorem eval_waves {ls ws : List (List Node)} (h : Waves ls ws)
     (hind : ∀ l ∈ ls, l.Pairwise Indep) :
@@ -154,11 +231,14 @@ theorem eval_waves {ls ws : List (List Node)} (h : Waves ls ws)
     exact ih (fun l' hl' => hind l' (List.mem_cons_of_mem l hl')) _
 
 /-- Parallel propagation correctness: propagating in *any* level-synchronous wave order
-from a consistent old run computes the from-scratch result of the canonical program. -/
+from a consistent old run computes the from-scratch result of the canonical program.
+Well-formedness is required only of the canonical order — `waves_WF` transports it to
+whatever order the workers actually committed. -/
 theorem propagate_waves_correct {ls ws : List (List Node)}
     (h : Waves ls ws) (hind : ∀ l ∈ ls, l.Pairwise Indep)
-    (hwf : WF ws.flatten) (σ₀ σ₁ : Store) :
+    (hwf : WF ls.flatten) (σ₀ σ₁ : Store) :
     propagate (eval σ₀ ls.flatten) σ₁ ws.flatten = eval σ₁ ls.flatten := by
-  rw [eval_waves h hind σ₀, propagate_correct hwf σ₀ σ₁, ← eval_waves h hind σ₁]
+  rw [eval_waves h hind σ₀, propagate_correct (waves_WF h hind hwf) σ₀ σ₁,
+      ← eval_waves h hind σ₁]
 
 end PsacModel
