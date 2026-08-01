@@ -32,6 +32,7 @@
    #:adaptive-forest #:forest-insert! #:forest-total #:forest-count
    ;; portfolio scenario
    #:make-universe #:tick! #:book-trade! #:request #:ledger-alist #:risk-report
+   #:explain-view #:readable-by
    #:run-portfolio-demo #:*request-fee* #:find-asset
    #:make-dynamic-book #:add-asset! #:dynamic-book-assets #:dynamic-book-firm-pnl
    #:run-dynamic-book-demo

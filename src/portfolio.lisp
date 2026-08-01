@@ -36,6 +36,9 @@
   worst
   ;; view-key -> (mod . resource-class)
   (views (make-hash-table :test #'equal))
+  ;; mod -> resource-class, for every mod in the universe (provenance walks consult
+  ;; this; anything unclassified is unreadable through EXPLAIN-VIEW)
+  (mod-classes (make-hash-table :test #'eq))
   ;; input mod -> predefined cost of one source-data update ("API cost" of that feed)
   (data-costs (make-hash-table :test #'eq))
   ;; principal id -> total charged for requests
@@ -122,7 +125,17 @@ policy. Assumes a fresh graph (caller does RESET-GRAPH! / RESET-POLICY!)."
           (setf (gethash (cons :price (asset-ticker a)) views)
                 (cons (asset-price-mod a) :marketdata)
                 (gethash (cons :pnl (asset-ticker a)) views)
-                (cons (asset-pnl-mod a) :marketdata)))))
+                (cons (asset-pnl-mod a) :marketdata))))
+      ;; --- resource class of every mod --------------------------------------------
+      (let ((classes (universe-mod-classes u)))
+        (maphash (lambda (key entry)
+                   (declare (ignore key))
+                   (setf (gethash (car entry) classes) (cdr entry)))
+                 (universe-views u))
+        (dolist (a assets)
+          ;; position detail: same tier as per-asset P&L
+          (setf (gethash (asset-qty-mod a) classes) :marketdata
+                (gethash (asset-basis-mod a) classes) :marketdata))))
     ;; --- access policy as SAC --------------------------------------------------
     (admit! "alice" :risk)
     (admit! "bob" :desk-b)
@@ -190,6 +203,32 @@ charges the ledger, and returns (values result charge). Denied requests pay the 
         (incf (gethash id (universe-ledger universe) 0) charge)
         (values (if allowed (mod-value mod) :denied)
                 charge)))))
+
+;;;; Policy-gated provenance ------------------------------------------------------
+
+(defun readable-by (universe principal)
+  "Predicate: may PRINCIPAL read this mod? Consults the self-adjusting ALLOWED-MOD
+decisions, so a revocation truncates provenance answers after the next PROPAGATE!.
+Mods without a resource class are unreadable."
+  (lambda (mod)
+    (let ((class (gethash mod (universe-mod-classes universe))))
+      (and class
+           (mod-value (allowed-mod principal class :groups '(:risk :desk-b)))
+           t))))
+
+(defun explain-view (universe principal view-key &key (depth 3) (selective t))
+  "Provenance query gated by the access policy: the answer descends the derivation
+only while every mod on the path is readable by PRINCIPAL, and collapses anything
+beyond that boundary into (:redacted t) -- no names, values, or branch counts leak.
+A view PRINCIPAL may not read at all answers :DENIED, like REQUEST."
+  (let ((entry (gethash view-key (universe-views universe))))
+    (unless entry
+      (error "unknown view ~s" view-key))
+    (destructuring-bind (mod . class) entry
+      (if (mod-value (allowed-mod principal class :groups '(:risk :desk-b)))
+          (explain mod :depth depth :selective selective
+                       :readable (readable-by universe principal))
+          :denied))))
 
 (defun ledger-alist (universe)
   "((principal-name . total-charged) ...) sorted by id."

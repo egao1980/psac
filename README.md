@@ -86,6 +86,15 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   the runtime's `support` (ancestor read sets of nested reads) is covered by the test suite, not the proof.
   Selective slices explain the current value only; they do not
   bound influence (for a max, any input rising above the current value would change it).
+- **Policy-gated provenance**: `explain` takes a `:readable` predicate and descends only while every
+  mod on the path is readable by the caller, collapsing anything beyond the boundary into a single
+  `(:redacted t)` entry — no names, values, or branch counts leak. `explain-view` (portfolio) wires
+  the predicate to the self-adjusting `allowed-mod` decisions, so a revocation truncates provenance
+  answers on the next propagate; an unreadable root answers `:denied` like `request`. Lean
+  (`model/PsacModel/Access.lean`): `explain_mentions_readable` (no unreadable location appears in an
+  answer) and `explain_no_leak` (answers are a function of the readable projection of the store
+  alone). Bare `support` / `derivation-slice` stay unfiltered on purpose — they are trusted-context
+  APIs for billing and reports.
 - **Scenarios** (tagged / private / as-if updates): `with-scenario` + `scenario-write!` +
   `scenario-propagate!` run a named batch of hypothetical writes against the live graph and roll it
   back on exit (normal or non-local); `what-if` is the multi-write `probe`. Private: the base
@@ -106,8 +115,8 @@ devcontainer exec --workspace-folder . bash scripts/diff-test.sh   # CL runtime 
   change propagation. `release-gated` demonstrates a differencing-resistant aggregate gate.
 - **Lean model** (`model/`): straight-line SSA node programs over `Store := String → Int`.
   Theorems: `propagate_correct` (incremental = from-scratch), `support_sound`, cost conservation,
-  and the `ParLevel` commutation results above. The `oracle` executable evaluates scenarios from
-  scratch and cross-checks its own `propagate`.
+  the redaction guarantees in `Access.lean`, and the `ParLevel` commutation results above. The
+  `oracle` executable evaluates scenarios from scratch and cross-checks its own `propagate`.
 
 ## Worked scenario: portfolio risk (`src/portfolio.lisp`)
 
@@ -121,7 +130,9 @@ position (selective provenance: the argmin position explains the number).
 
 - **Access** (policy as SAC): Alice (group `:risk`) sees everything; Bob (group `:desk-b`) sees
   only his desk's aggregates — raw prices, per-position detail and firm-wide views answer
-  `:denied`, and `revoke!` cuts him off by ordinary change propagation.
+  `:denied`, and `revoke!` cuts him off by ordinary change propagation. `explain-view` extends the
+  same policy to provenance queries: Bob's explanation of his desk P&L stops at the desk layer,
+  with everything below collapsed into `(:redacted t)`.
 - **Billing**, two channels: propagation bills blame whoever wrote (feed ticks, Alice's trades)
   for the nodes their change re-ran at each node's predefined `:cost`; `request` charges the
   caller a flat API fee plus source-data costs and calc costs summed over the provenance slice

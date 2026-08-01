@@ -345,6 +345,50 @@
       (revoke! "bob" :desk-b)
       (ok (eq (request u "bob" :desk-b-pnl) :denied)))))
 
+(deftest-fresh provenance-access
+  (testing "EXPLAIN :readable truncates the walk and collapses hidden branches"
+    (let ((secret (make-mod 10 :name "secret"))
+          (public (make-mod 3 :name "public"))
+          (out (make-mod nil :name "out")))
+      (adaptive-read ((s secret) (p public)) (write! out (+ s p)))
+      (let* ((readable (lambda (m) (not (eq m secret))))
+             (tree (explain out :readable readable))
+             (kids (getf tree :from)))
+        (ok (equal (getf tree :mod) "out"))
+        (ok (= (getf tree :value) 13))
+        (ok (= (length kids) 2))
+        (ok (equal (getf (first kids) :mod) "public"))
+        (ok (getf (second kids) :redacted))
+        (ok (getf (explain secret :readable readable) :redacted))
+        ;; no predicate: full walk unchanged
+        (ok (equal (getf (first (getf (explain out) :from)) :mod) "secret")))))
+  (testing "EXPLAIN-VIEW answers up to the layer fully accessible to the caller"
+    (let ((u (make-universe '(("AAPL" 19000 100 18000 2)
+                              ("MSFT" 41000 50 40000 2)
+                              ("GOOG" 17500 -30 18000 2))
+                            '("AAPL" "MSFT"))))
+      ;; alice: the full derivation down to price/qty/basis inputs, nothing redacted
+      (let* ((tree (explain-view u "alice" :firm-pnl))
+             (printed (format nil "~s" tree)))
+        (ok (= (getf tree :value) 165000))
+        (ok (= (length (getf tree :from)) 3))
+        (ok (not (search "REDACTED" printed)))
+        (ok (search "price[GOOG]" printed)))
+      ;; bob: his desk aggregate, everything below collapsed into a single marker
+      (let* ((tree (explain-view u "bob" :desk-b-pnl))
+             (printed (format nil "~s" tree)))
+        (ok (= (getf tree :value) 150000))
+        (ok (equal (getf tree :from) '((:redacted t))))
+        (dolist (leak '("price[" "pnl[" "qty[" "basis["))
+          (ok (not (search leak printed)))))
+      ;; unreadable roots answer :denied, like REQUEST
+      (ok (eq (explain-view u "bob" :firm-pnl) :denied))
+      (ok (eq (explain-view u "bob" (cons :pnl "MSFT")) :denied))
+      (ok (eq (explain-view u "bob" :worst-position) :denied))
+      ;; revocation is change propagation: provenance truncates with it
+      (revoke! "bob" :desk-b)
+      (ok (eq (explain-view u "bob" :desk-b-pnl) :denied)))))
+
 (deftest-fresh multi-universe
   (testing "universes coexist in one graph: independent values, bills, ledgers, what-ifs"
     ;; same tickers on purpose: mods are per-universe structs, names are just labels.
