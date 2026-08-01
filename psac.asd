@@ -1,6 +1,6 @@
 (asdf:defsystem "psac"
   :description "Self-adjusting computation with cost attribution, provenance, and access rights."
-  :author "egao1980"
+  :author "Nikolai Matiushev"
   :license "MIT"
   :version "0.1.0"
   :depends-on ("alexandria" "com.inuoe.jzon" "bordeaux-threads" "lparallel")
