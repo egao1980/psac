@@ -1,5 +1,7 @@
 # psac
 
+[![100% AI Generated](https://img.shields.io/badge/100%25-AI%20Generated-black)](https://github.com/egao1980/psac)
+
 Self-adjusting computation (SAC) in Common Lisp with cost attribution, provenance-based explanation,
 and access rights expressed as SAC — paired with a Lean 4 model of the trace semantics.
 
